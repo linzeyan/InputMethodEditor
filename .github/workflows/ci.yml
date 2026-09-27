@@ -18,7 +18,7 @@ jobs:
     steps:
       - name: Cache llvm-mingw
         id: cache-llvm-linux
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: /opt/llvm-mingw
           key: llvm-mingw-${{ runner.os }}-${{ env.LLVM_MINGW_VERSION }}
@@ -43,13 +43,13 @@ jobs:
           rustup target add i686-pc-windows-gnullvm
           rustup target add x86_64-pc-windows-gnullvm
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: Swatinem/rust-cache@v2
 
       # Codeberg downloads are slow; the cache key follows the pinned checksum.
       - name: Cache dictionary
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .cache
           key: dictionary-${{ hashFiles('xtask/src/download.rs') }}
