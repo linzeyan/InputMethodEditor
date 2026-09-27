@@ -485,7 +485,9 @@ impl Display for KeybindValue {
     }
 }
 
-fn grant_app_container_access(
+/// Adds an inheritable ALL APPLICATION PACKAGES entry so AppContainer processes
+/// (Start menu search, Store apps) can read the object.
+pub fn grant_app_container_access(
     object: PCWSTR,
     typ: SE_OBJECT_TYPE,
     access: u32,

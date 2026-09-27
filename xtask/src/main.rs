@@ -2,13 +2,13 @@
 
 use scoped_error::{Error, expect_error};
 
+mod dist;
 mod download;
-mod installer;
 mod version;
 mod zip;
 
 mod flags {
-    use super::installer::Target;
+    use super::dist::Target;
 
     xflags::xflags! {
         src "src/main.rs"
@@ -26,18 +26,14 @@ mod flags {
                 /// Optional build number (u32)
                 optional -b, --build BUILD_NUMBER: u32
             }
-            /// Build the installer.
-            cmd build-installer {
-                /// Target platform [gnu, msvc]
+            /// Build the portable package in dist/.
+            cmd dist {
+                /// Target platform [gnu, gnullvm, msvc]
                 optional -t, --target TARGET: Target
                 /// Build release artifact
                 optional --release
                 /// Build nightly artifact
                 optional --nightly
-            }
-            /// Download prebuilt components and verify the signatures.
-            cmd download-components {
-
             }
         }
     }
@@ -52,8 +48,7 @@ mod flags {
     #[derive(Debug)]
     pub enum XtaskCmd {
         UpdateVersion(UpdateVersion),
-        BuildInstaller(BuildInstaller),
-        DownloadComponents(DownloadComponents),
+        Dist(Dist),
     }
 
     #[derive(Debug)]
@@ -65,14 +60,11 @@ mod flags {
     }
 
     #[derive(Debug)]
-    pub struct BuildInstaller {
+    pub struct Dist {
         pub target: Option<Target>,
         pub release: bool,
         pub nightly: bool,
     }
-
-    #[derive(Debug)]
-    pub struct DownloadComponents;
 
     impl Xtask {
         #[allow(dead_code)]
@@ -101,11 +93,8 @@ fn main() -> Result<(), Error> {
             flags::XtaskCmd::UpdateVersion(flags) => {
                 version::update_version(flags)?;
             }
-            flags::XtaskCmd::BuildInstaller(flags) => {
-                installer::build_installer(flags)?;
-            }
-            flags::XtaskCmd::DownloadComponents(flags) => {
-                download::download_components(flags)?;
+            flags::XtaskCmd::Dist(flags) => {
+                dist::dist(flags)?;
             }
         }
 

@@ -1,47 +1,66 @@
-# windows-chewing-tsf
+# InputMethodEditor
 
-Implement chewing in Windows via Text Services Framework:
+個人使用的 Windows 中文輸入法，fork 自
+[windows-chewing-tsf](https://codeberg.org/chewing/windows-chewing-tsf)，
+引擎是 [libchewing](https://codeberg.org/chewing/libchewing)（新酷音）。
 
-* chewing_tip contains an implementation of Windows text service for libchewing.
-* tsfreg contains TSF registration helper used in the installer.
-* preferences contains the user preference and phrase editor GUI.
+目標：
+
+* 注音：新酷音的智慧選字、選字修正與自動學習
+* 拼音：連打、自動學習（尚未實作）
+* 輸出正體／簡體切換，可選擇是否轉換用語（尚未實作）
+
+目前是免安裝版的新酷音注音輸入法。
 
 All parts are licensed under GPL-3.0-or-later license.
 
-# Development
+# 安裝（免安裝版）
 
-## Tool Requirements
+1. 把 `InputMethodEditor.zip` 解壓到固定的位置，建議
+   `C:\Program Files\InputMethodEditor`（原因見下方〈安全性〉）。
+   註冊後不要搬移或刪除這個資料夾。
+2. 執行 `register.bat`，在 UAC 視窗按「是」。
+3. 已開啟的程式要重新開啟才能使用。
 
-**Build natively on Windows using MSVC**
+移除：先執行 `unregister.bat`，再刪除資料夾。使用者詞庫與設定不會被刪除，
+分別在 `%AppData%\InputMethodEditor` 與 `HKEY_CURRENT_USER\Software\InputMethodEditor`，
+不需要時請手動刪除。
 
-* [Build Tools for Visual Studio 2022](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
-* [NodeJS Native](https://nodejs.org/)
-* [Rust](https://rustup.rs/)
+Windows 只從 HKLM 讀取輸入法的 COM 註冊，所以註冊需要一次系統管理員權限。
+若平常使用標準使用者帳號、UAC 時輸入的是另一個管理員帳號，輸入法只會加到
+那個管理員帳號的清單；請回到自己的帳號，從「設定 → 時間與語言 → 語言」
+在中文（台灣）底下手動新增 InputMethodEditor。
 
-**Cross compile on Windows using MinGW-W64**
+## 安全性
 
-* [MSYS2](https://www.msys2.org/)
-* [NodeJS Native](https://nodejs.org/)
-* [Rust](https://rustup.rs/)
+輸入法是 DLL，會被載入每一個程式，包括以系統管理員身分執行的程式。
+資料夾放在 Program Files 以外時，任何以你的身分執行的程式都能替換這個 DLL，
+進而取得系統管理員權限。`register.bat` 在這種情況下會先警告。
 
-**Cross compile on Fedora using MinGW-W64**
+# 建置
 
-* [NodeJS Native](https://nodejs.org/)
-* [Rust](https://rustup.rs/)
+需要 [Rust](https://rustup.rs/)，以及下列其中一種工具鏈。
 
-## How to Build
+**Windows，MSVC**
 
-* Get source from github
-    ```bash
-    git clone --recursive https://github.com/chewing/windows-chewing-tsf.git
-    cd windows-chewing-tsf
-    ```
-* Use this xtask command to build the installer
-    ```
-    cargo xtask build-installer --target msvc --release
-    cargo xtask download-components
-    cargo xtask package-installer
-    ```
+* [Build Tools for Visual Studio](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022)
+
+```
+rustup target add x86_64-pc-windows-msvc i686-pc-windows-msvc
+cargo xtask dist --release
+```
+
+**macOS／Linux 交叉編譯，llvm-mingw**
+
+* [llvm-mingw](https://github.com/mstorsjo/llvm-mingw)，把它的 `bin` 加進 `PATH`
+
+```
+rustup target add x86_64-pc-windows-gnullvm i686-pc-windows-gnullvm
+cargo xtask dist --target gnullvm --release
+```
+
+產出 `dist/InputMethodEditor/` 與 `dist/InputMethodEditor.zip`。
+辭典從 libchewing-data 下載並以 SHA-256 驗證，快取在 `.cache/`。
 
 ## TSF References
 
@@ -63,19 +82,7 @@ All parts are licensed under GPL-3.0-or-later license.
 * [GetAppContainerNamedObjectPath function (enable accessing object outside app containers using ACL)](http://msdn.microsoft.com/en-us/library/windows/desktop/hh448493)
 * [Creating a DACL](http://msdn.microsoft.com/en-us/library/windows/apps/ms717798.aspx)
 
-# Code Signing Policy
-
-This [project](https://signpath.org/projects/chewing-im/) is sponsored by SignPath. We use free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
-
-**People and roles:**
-
-* Committers and reviewers: [Chewing core team](https://github.com/orgs/chewing/teams/core), [Windows Chewing maintainers](https://github.com/orgs/chewing/teams/windows)
-* Approvers: [Chewing core team](https://github.com/orgs/chewing/teams/core)
-
 # Privacy Policy
 
 This program will not transfer any information to other networked systems unless
 specifically requested by the user or the person installing or operating it.
-
-# Bug Report
-Please report any issue to [here](https://github.com/chewing/windows-chewing-tsf/issues).

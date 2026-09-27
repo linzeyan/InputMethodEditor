@@ -3,29 +3,34 @@
 
 #![windows_subsystem = "windows"]
 
-use std::{env, process};
+use std::env;
+use std::error::Error;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
+use chewing_tip_core::PRODUCT_NAME;
+use chewing_tip_core::config::grant_app_container_access;
 use windows::{
     Win32::{
         Globalization::*,
+        Security::Authorization::{SE_FILE_OBJECT, SE_REGISTRY_KEY},
+        Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ},
         System::{
             Com::*,
-            Console::{ATTACH_PARENT_PROCESS, AttachConsole},
-            Diagnostics::Debug::IsDebuggerPresent,
+            Registry::{KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS},
         },
-        UI::{Input::KeyboardAndMouse::HKL, TextServices::*},
+        UI::{Input::KeyboardAndMouse::HKL, TextServices::*, WindowsAndMessaging::*},
     },
     core::*,
 };
-#[cfg(feature = "nightly")]
-use windows_registry::LOCAL_MACHINE;
+use windows_registry::{CURRENT_USER, LOCAL_MACHINE};
 
 // https://learn.microsoft.com/en-us/windows/win32/tsf/installlayoutortip
 windows::core::link!("input.dll" "system" fn InstallLayoutOrTip(psz: *const u16, dwFlags: u32));
 const ILOT_INSTALL: u32 = 0x00000000;
-// const ILOT_UNINSTALL: u32 = 0x00000001;
 
 const CHEWING_TSF_CLSID: GUID = GUID::from_u128(0xE0C45601_7E8F_4FEF_9871_8B0C785B9B48);
+const CHEWING_TSF_CLSID_STR: &str = "{E0C45601-7E8F-4FEF-9871-8B0C785B9B48}";
 const CHEWING_ZH_TW_PROFILE_GUID: GUID = GUID::from_u128(0x65C3BF2B_7BF5_4B82_8D03_1EC109E380C4);
 const CHEWING_TIP_DESC: PCWSTR =
     w!("0x0404:{E0C45601-7E8F-4FEF-9871-8B0C785B9B48}{65C3BF2B-7BF5-4B82-8D03-1EC109E380C4}");
@@ -40,23 +45,79 @@ const CATEGORIES: [GUID; 7] = [
     GUID_TFCAT_TIPCAP_COMLESS,
 ];
 
-fn register(icon_path: String) -> Result<()> {
+type Outcome = std::result::Result<Option<&'static str>, Box<dyn Error>>;
+
+fn zh_tw_langid() -> u16 {
+    let lcid = unsafe { LocaleNameToLCID(w!("zh-TW"), 0) };
+    if matches!(lcid, 0 | 0x0C00 | 0x1000) {
+        0x404
+    } else {
+        lcid as u16
+    }
+}
+
+/// Program Files is only writable by administrators. Anywhere else, any
+/// process running as this user could swap the DLL that elevated apps load.
+fn is_admin_protected(root: &Path) -> bool {
+    let root = root.to_string_lossy().to_lowercase();
+    ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
+        .iter()
+        .filter_map(|var| env::var(var).ok())
+        .any(|dir| root.starts_with(&format!("{}\\", dir.to_lowercase())))
+}
+
+fn register_com_server(view: REG_SAM_FLAGS, dll: &Path) -> windows_registry::Result<()> {
+    let key = LOCAL_MACHINE
+        .options()
+        .create()
+        .write()
+        .access(view.0)
+        .open(format!(
+            r"Software\Classes\CLSID\{CHEWING_TSF_CLSID_STR}\InprocServer32"
+        ))?;
+    key.set_string("", dll.to_string_lossy())?;
+    key.set_string("ThreadingModel", "Apartment")
+}
+
+fn register(root: &Path) -> Outcome {
+    let x64_dll = root.join("x64").join("chewing_tip.dll");
+    let x86_dll = root.join("x86").join("chewing_tip.dll");
+    let icon = root.join(format!("{PRODUCT_NAME}.ico"));
+    for path in [&x64_dll, &x86_dll, &icon] {
+        if !path.exists() {
+            return Err(format!("找不到 {}", path.display()).into());
+        }
+    }
+
+    if !is_admin_protected(root) {
+        let answer = message_box(
+            &format!(
+                "輸入法資料夾不在 Program Files：\n{}\n\n\
+                 註冊後，連以系統管理員身分執行的程式也會載入這裡的 DLL。\
+                 任何以你的身分執行的程式都能替換它，進而取得系統管理員權限。\n\n\
+                 仍要註冊嗎？",
+                root.display()
+            ),
+            MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2,
+        );
+        if answer != IDOK {
+            return Ok(None);
+        }
+    }
+
+    // Both views: 32-bit apps load the x86 DLL through the WOW64 registry.
+    register_com_server(KEY_WOW64_64KEY, &x64_dll)?;
+    register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
+
     unsafe {
         let input_processor_profile_mgr: ITfInputProcessorProfileMgr =
             CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
-
-        let pw_icon_path = icon_path.encode_utf16().collect::<Vec<_>>();
-
-        // Register for zh_TW
-        let mut lcid = LocaleNameToLCID(w!("zh-TW"), 0);
-        if matches!(lcid, 0 | 0x0C00 | 0x1000) {
-            lcid = 0x404;
-        }
+        let pw_icon_path = icon.to_string_lossy().encode_utf16().collect::<Vec<_>>();
         input_processor_profile_mgr.RegisterProfile(
             &CHEWING_TSF_CLSID,
-            lcid as u16,
+            zh_tw_langid(),
             &CHEWING_ZH_TW_PROFILE_GUID,
-            w!("InputMethodEditor").as_wide(),
+            &PRODUCT_NAME.encode_utf16().collect::<Vec<_>>(),
             &pw_icon_path,
             0,
             HKL::default(),
@@ -72,95 +133,139 @@ fn register(icon_path: String) -> Result<()> {
         }
     }
 
-    #[cfg(feature = "nightly")]
-    {
-        // Enable user-mode minidump for debug build
-        if let Err(error) = LOCAL_MACHINE
-            .create("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps")
-        {
-            println!("Error: unable to enable user-mode minidump: {error}");
-        }
-    }
-    Ok(())
-}
+    // AppContainer processes (Start menu search, Store apps) cannot load the
+    // DLL or dictionary otherwise. Program Files already grants this.
+    let root_path = HSTRING::from(root.as_os_str());
+    grant_app_container_access(
+        PCWSTR(root_path.as_ptr()),
+        SE_FILE_OBJECT,
+        (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0,
+    )?;
 
-fn unregister() -> Result<()> {
-    unsafe {
-        let input_processor_profile_mgr: ITfInputProcessorProfileMgr =
-            CoCreateInstance(&CLSID_TF_InputProcessorProfiles, None, CLSCTX_INPROC_SERVER)?;
+    // The DLL only reads settings, so the key must exist and be readable from
+    // AppContainer processes before any setting is written.
+    CURRENT_USER.create(format!(r"Software\{PRODUCT_NAME}"))?;
+    let key_path = HSTRING::from(format!(r"CURRENT_USER\Software\{PRODUCT_NAME}"));
+    grant_app_container_access(PCWSTR(key_path.as_ptr()), SE_REGISTRY_KEY, KEY_READ.0)?;
 
-        let category_manager: ITfCategoryMgr =
-            CoCreateInstance(&CLSID_TF_CategoryMgr, None, CLSCTX_INPROC_SERVER)?;
-        for tfcat in &CATEGORIES {
-            if let Err(error) =
-                category_manager.UnregisterCategory(&CHEWING_TSF_CLSID, tfcat, &CHEWING_TSF_CLSID)
-            {
-                println!("Failed to unregister category {tfcat:?}: {error}");
-            }
-        }
-
-        // Unregister zh_TW profile
-        let mut lcid = LocaleNameToLCID(w!("zh-TW"), 0);
-        if matches!(lcid, 0 | 0x0C00 | 0x1000) {
-            lcid = 0x404;
-        }
-        input_processor_profile_mgr.UnregisterProfile(
-            &CHEWING_TSF_CLSID,
-            lcid as u16,
-            &CHEWING_ZH_TW_PROFILE_GUID,
-            0,
-        )?;
-    }
-
-    Ok(())
-}
-
-fn enable() {
     unsafe {
         InstallLayoutOrTip(CHEWING_TIP_DESC.as_ptr(), ILOT_INSTALL);
     }
+
+    #[cfg(feature = "nightly")]
+    {
+        // Enable user-mode minidump for debug build
+        let _ = LOCAL_MACHINE
+            .create("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps");
+    }
+    Ok(Some(
+        "註冊完成。已開啟的程式要重新開啟後才能使用這個輸入法。",
+    ))
 }
 
-fn disable() {
-    // Don't uninstall the layout for now. If the last layout of a language is
-    // uninstalled then Windows changes the system locale to English or another
-    // available language.
-    //
-    // Ref: https://github.com/chewing/windows-chewing-tsf/issues/553
-    //
-    // unsafe {
-    //     InstallLayoutOrTip(CHEWING_TIP_DESC.as_ptr(), ILOT_UNINSTALL);
-    // }
-}
-
-fn main() -> Result<()> {
+/// Best effort: keeps going after a failed step so a half-registered state
+/// can still be cleaned up, then reports every step that failed.
+fn unregister() -> Outcome {
+    let mut failures: Vec<String> = vec![];
     unsafe {
-        if IsDebuggerPresent().as_bool() {
-            let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        match CoCreateInstance::<_, ITfCategoryMgr>(
+            &CLSID_TF_CategoryMgr,
+            None,
+            CLSCTX_INPROC_SERVER,
+        ) {
+            Ok(category_manager) => {
+                for tfcat in &CATEGORIES {
+                    let _ = category_manager.UnregisterCategory(
+                        &CHEWING_TSF_CLSID,
+                        tfcat,
+                        &CHEWING_TSF_CLSID,
+                    );
+                }
+            }
+            Err(error) => failures.push(format!("類別：{error}")),
         }
-        CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()?;
 
-        if env::args().len() == 1 {
-            println!("Usage:");
-            println!("  tsfreg -r <IconPath>    註冊輸入法");
-            println!("  tsfreg -i           立即啟用輸入法");
-            println!("  tsfreg -d           立即停用輸入法");
-            println!("  tsfreg -u                 取消註冊");
-            process::exit(1);
-        }
-
-        if let Some("-r") = env::args().nth(1).as_deref() {
-            let icon_path = env::args().nth(2).expect("缺少 IconPath");
-            register(icon_path)?;
-        } else if let Some("-i") = env::args().nth(1).as_deref() {
-            enable();
-        } else if let Some("-d") = env::args().nth(1).as_deref() {
-            disable();
-        } else if let Err(err) = unregister() {
-            println!("警告：無法解除輸入法註冊，反安裝可能無法正常完成。");
-            println!("錯誤訊息：{:?}", err);
+        // Don't uninstall the layout with InstallLayoutOrTip. If the last layout
+        // of a language is uninstalled then Windows changes the system locale.
+        // Ref: https://github.com/chewing/windows-chewing-tsf/issues/553
+        let profile = CoCreateInstance::<_, ITfInputProcessorProfileMgr>(
+            &CLSID_TF_InputProcessorProfiles,
+            None,
+            CLSCTX_INPROC_SERVER,
+        )
+        .and_then(|mgr| {
+            mgr.UnregisterProfile(
+                &CHEWING_TSF_CLSID,
+                zh_tw_langid(),
+                &CHEWING_ZH_TW_PROFILE_GUID,
+                0,
+            )
+        });
+        if let Err(error) = profile {
+            failures.push(format!("輸入法設定檔：{error}"));
         }
     }
 
-    Ok(())
+    for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
+        let removed = LOCAL_MACHINE
+            .options()
+            .write()
+            .access(view.0)
+            .open(r"Software\Classes\CLSID")
+            .and_then(|clsid| clsid.remove_tree(CHEWING_TSF_CLSID_STR));
+        if let Err(error) = removed {
+            failures.push(format!("COM 註冊：{error}"));
+        }
+    }
+
+    if failures.is_empty() {
+        Ok(Some(
+            "已解除註冊。使用者詞庫和設定仍保留；已開啟的程式要重新開啟後才會完全移除。",
+        ))
+    } else {
+        Err(format!(
+            "部分步驟失敗（之前未註冊時屬正常）：\n{}",
+            failures.join("\n")
+        )
+        .into())
+    }
+}
+
+fn message_box(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(text),
+            &HSTRING::from(PRODUCT_NAME),
+            style,
+        )
+    }
+}
+
+fn run() -> Outcome {
+    unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
+    let root: PathBuf = env::current_exe()?
+        .parent()
+        .ok_or("無法判斷輸入法資料夾")?
+        .to_path_buf();
+    match env::args().nth(1).as_deref() {
+        Some("register") => register(&root),
+        Some("unregister") => unregister(),
+        _ => Err("用法：tsfreg register | tsfreg unregister".into()),
+    }
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(Some(done)) => {
+            message_box(done, MB_OK | MB_ICONINFORMATION);
+            ExitCode::SUCCESS
+        }
+        // Cancelled by the user.
+        Ok(None) => ExitCode::FAILURE,
+        Err(error) => {
+            message_box(&format!("失敗：{error}"), MB_OK | MB_ICONERROR);
+            ExitCode::FAILURE
+        }
+    }
 }

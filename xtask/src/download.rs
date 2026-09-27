@@ -1,76 +1,44 @@
-use std::{ffi::OsString, io::Cursor, path::PathBuf};
+use std::io::Cursor;
+use std::path::Path;
 
-use rpgpie_sop::{Certs, RPGSOP, Sigs};
-use scoped_error::{Error, expect_error, expect_error_fn};
-use sop::{Load, SOP};
+use scoped_error::{Error, expect_error};
+use sha2::{Digest, Sha256};
 use xshell::{Shell, cmd};
 
-use crate::{flags::DownloadComponents, zip::unzip};
+use crate::zip::unzip;
 
-const MANIFEST: [(&str, &str, &str, &str); 1] = [(
-    "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip",
-    "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip.asc",
-    "libchewing-data.zip",
-    "build/installer/Dictionary",
-)];
+const DICTIONARY_URL: &str = "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip";
+// Pinned after checking the release's OpenPGP signature against the libchewing
+// signing key (release@chewing.im). Re-verify the signature when bumping the URL.
+const DICTIONARY_SHA256: &str = "6ca66e008c4f60de689a3b61fd6dcb428dbf87922573fd84f946bf478ce925a8";
 
-pub(crate) fn download_components(_flags: DownloadComponents) -> Result<(), Error> {
-    expect_error("failed to download components", || {
-        for component in MANIFEST {
-            let (url, sig_url, output, dest) = component;
-            sq_download(url, sig_url, "release.pgp", output, dest)?;
-        }
-        Ok(())
-    })
-}
-
-fn sq_download(
-    url: &str,
-    sig_url: &str,
-    cert_file: &str,
-    src: &str,
-    dest: &str,
-) -> Result<(), Error> {
-    let err = || {
-        Error::new(format!(
-            "failed to download file\n      url: {url}\nsignature: {sig_url}\n     cert: {cert_file}"
-        ))
-    };
-    expect_error_fn(err, || {
+pub(crate) fn download_dictionary(dest: &Path) -> Result<(), Error> {
+    expect_error("failed to download the dictionary", || {
         let sh = Shell::new()?;
-        let temp_dir = sh.create_temp_dir()?;
-        let src = temp_dir.path().join(src);
-        let dest = PathBuf::from(dest);
-
-        sh.create_dir(&dest)?;
-
-        cmd!(sh, "curl -L -o {src} {url}").run()?;
-        cmd!(sh, "curl -L -o {src}.asc {sig_url}").run()?;
-
-        let sop = RPGSOP::default();
-        let certs = Certs::from_file(&sop, "release.pgp")?;
-
-        let mut sig_path = src.clone();
-        let extension = sig_path.extension().map_or(OsString::from("asc"), |ext| {
-            let mut ext = ext.to_os_string();
-            ext.push(".asc");
-            ext
-        });
-        sig_path.set_extension(extension);
-        let sig = Sigs::from_file(&sop, sig_path)?;
-        let data = std::fs::read(&src)?;
-        let mut cursor = Cursor::new(data);
-        let verifications = sop
-            .verify()?
-            .certs(&certs)?
-            .signatures(&sig)?
-            .data(&mut cursor)?;
-        if verifications.is_empty() {
-            Err("unable to verify signature")?;
+        // The archive is ~18 MB; naming the cache by checksum makes a URL bump
+        // download the new one instead of failing on the old file.
+        let src = sh
+            .create_dir(".cache")?
+            .join(format!("libchewing-data-{}.zip", &DICTIONARY_SHA256[..16]));
+        if !src.exists() {
+            cmd!(sh, "curl -fL -o {src} {DICTIONARY_URL}").run()?;
         }
 
-        cursor.set_position(0);
-        unzip(&dest, cursor)?;
+        let data = std::fs::read(&src)?;
+        let digest: String = Sha256::digest(&data)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        if digest != DICTIONARY_SHA256 {
+            // Likely an interrupted download; drop it so the next run starts over.
+            sh.remove_path(&src)?;
+            Err(format!(
+                "checksum mismatch: expected {DICTIONARY_SHA256}, got {digest}"
+            ))?;
+        }
+
+        sh.create_dir(dest)?;
+        unzip(dest, Cursor::new(data))?;
         Ok(())
     })
 }

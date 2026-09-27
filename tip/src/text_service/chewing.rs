@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Kan-Ru Chen
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::ffi::c_void;
+use std::ffi::{OsString, c_void};
 use std::mem;
+use std::os::windows::ffi::OsStringExt;
+use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -27,7 +29,8 @@ use chewing_tip_core::shell::{open_url, user_dir};
 use log::{debug, error, info};
 use scoped_error::impl_context_error;
 use scoped_error::{ErrorExt, expect_error};
-use windows::Win32::Foundation::{GetLastError, HINSTANCE, POINT, RECT};
+use windows::Win32::Foundation::{GetLastError, HINSTANCE, HMODULE, POINT, RECT};
+use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
@@ -1568,11 +1571,30 @@ impl<'a> ReentrantOps<'a> {
 }
 
 fn new_editor() -> Result<Editor> {
+    let dictionary_dir = dictionary_dir()?;
     let user_dir = user_dir()?;
     Ok(Editor::chewing(
-        None,
+        Some(dictionary_dir.to_string_lossy().into_owned()),
         Some(user_dir.to_string_lossy().into_owned()),
     )?)
+}
+
+/// The portable layout keeps the dictionary beside the per-architecture DLL
+/// folders (`<root>\x64\chewing_tip.dll`, `<root>\x86\...`, `<root>\Dictionary`),
+/// so the folder works wherever it was unzipped.
+fn dictionary_dir() -> Result<PathBuf> {
+    let module = HMODULE(G_HINSTANCE.load(Ordering::Relaxed) as *mut c_void);
+    let mut buf = vec![0u16; 32768];
+    let len = unsafe { GetModuleFileNameW(Some(module), &mut buf) } as usize;
+    if len == 0 {
+        bail!("unable to locate chewing_tip.dll");
+    }
+    let dll_path = PathBuf::from(OsString::from_wide(&buf[..len]));
+    let root = dll_path
+        .parent()
+        .and_then(Path::parent)
+        .context("chewing_tip.dll is not inside an architecture folder")?;
+    Ok(root.join("Dictionary"))
 }
 
 fn syl_editor_from_kbtype(kbtype: KeyboardLayoutCompat) -> Box<dyn SyllableEditor> {
