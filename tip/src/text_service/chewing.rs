@@ -557,6 +557,10 @@ impl ChewingTextService {
                 "text" => {
                     if !self.chewing_editor.is_empty() {
                         self.chewing_editor.commit()?;
+                        // Only process_keyevent writes what chewing learned to
+                        // disk; the next focus change reloads the editor from
+                        // there, so anything unwritten is lost.
+                        self.chewing_editor.flush();
                     }
                     text_action = Some(keybinding.param.clone());
                     handled = false;
@@ -687,6 +691,8 @@ impl ChewingTextService {
                                         {
                                             error!("failed to unlearn phrase: {error}");
                                         }
+                                        // Not via process_keyevent, so not written yet.
+                                        self.chewing_editor.flush();
                                         self.update_candidates(context)?;
                                         // TODO: move this to editor
                                         let shown = convert_output(&self.cfg.chewing_tsf, &phrase);
@@ -921,6 +927,8 @@ impl ChewingTextService {
             self.sync_lang_mode(false)?;
             if self.is_composing() && self.lang_mode.get().is_disabled() {
                 self.chewing_editor.commit()?;
+                // Not via process_keyevent, so not written yet.
+                self.chewing_editor.flush();
                 let commit = self.chewing_editor.display_commit().to_owned();
                 self.chewing_editor.ack();
                 debug!(commit; "commit string");
