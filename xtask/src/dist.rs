@@ -94,6 +94,16 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             sh.create_dir(dir.join("x86"))?,
         )?;
         sh.copy_file(x64_out.join("tsfreg.exe"), &dir)?;
+        // The release profile keeps debuginfo for crash analysis; with MSVC it
+        // goes to a separate .pdb, but gnullvm embeds it in the binaries.
+        if flags.release && matches!(flags.target, Some(Target::GnuLlvm)) {
+            let binaries = [
+                dir.join("x64").join("chewing_tip.dll"),
+                dir.join("x86").join("chewing_tip.dll"),
+                dir.join("tsfreg.exe"),
+            ];
+            cmd!(sh, "llvm-strip {binaries...}").run()?;
+        }
         sh.copy_file(
             "tip/rc/im.chewing.Chewing.ico",
             dir.join(format!("{PRODUCT_NAME}.ico")),
