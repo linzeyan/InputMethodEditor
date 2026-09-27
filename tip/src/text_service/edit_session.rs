@@ -1,0 +1,276 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 Kan-Ru Chen
+
+use std::cell::{Cell, RefCell};
+use std::mem::ManuallyDrop;
+use std::ops::Deref;
+use std::ptr;
+use std::rc::Rc;
+
+use log::{debug, error};
+use windows::Win32::Foundation::{FALSE, RECT};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::TextServices::{
+    GUID_PROP_ATTRIBUTE, INSERT_TEXT_AT_SELECTION_FLAGS, ITfComposition, ITfCompositionSink,
+    ITfContext, ITfContextComposition, ITfEditSession, ITfEditSession_Impl, ITfInsertAtSelection,
+    ITfRange, TF_AE_END, TF_ANCHOR_END, TF_ANCHOR_START, TF_CONTEXT_EDIT_CONTEXT_FLAGS,
+    TF_DEFAULT_SELECTION, TF_IAS_QUERYONLY, TF_SELECTION, TfActiveSelEnd,
+};
+use windows_core::{BOOL, HSTRING, Interface, Param, Result, implement};
+
+use super::chewing::CompositionString;
+
+pub(crate) fn request_edit_session(
+    context: &ITfContext,
+    tid: u32,
+    session_iface: impl Param<ITfEditSession>,
+    flags: TF_CONTEXT_EDIT_CONTEXT_FLAGS,
+) {
+    unsafe {
+        match context.RequestEditSession(tid, session_iface, flags) {
+            Err(e) => error!("failed to request edit session: {e}"),
+            Ok(res) => {
+                if let Err(e) = res.ok() {
+                    error!("edit session request returned error: {e}");
+                }
+            }
+        }
+    }
+}
+
+fn set_selection(
+    context: &ITfContext,
+    ec: u32,
+    range: ITfRange,
+    active_sel_end: TfActiveSelEnd,
+) -> Result<()> {
+    let mut selections = [TF_SELECTION::default(); 1];
+    selections[0].range = ManuallyDrop::new(Some(range));
+    selections[0].style.ase = active_sel_end;
+    selections[0].style.fInterimChar = FALSE;
+    let result = unsafe { context.SetSelection(ec, &selections) };
+    let [TF_SELECTION { range, .. }] = selections;
+    ManuallyDrop::into_inner(range);
+    result
+}
+
+#[implement(ITfEditSession)]
+pub(super) struct InsertText {
+    context: ITfContext,
+    text: HSTRING,
+}
+
+impl InsertText {
+    pub(super) fn new(context: ITfContext, text: HSTRING) -> InsertText {
+        Self { context, text }
+    }
+}
+
+impl ITfEditSession_Impl for InsertText_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        let insert_at_selection: ITfInsertAtSelection = self.context.cast()?;
+        unsafe {
+            let range = insert_at_selection.InsertTextAtSelection(
+                ec,
+                INSERT_TEXT_AT_SELECTION_FLAGS(0),
+                &self.text,
+            )?;
+            range.Collapse(ec, TF_ANCHOR_END)?;
+            set_selection(&self.context, ec, range, TF_AE_END)?;
+        }
+        Ok(())
+    }
+}
+
+#[implement(ITfEditSession)]
+pub(super) struct SetCompositionString {
+    context: ITfContext,
+    composition: Rc<RefCell<Option<ITfComposition>>>,
+    composition_sink: ITfCompositionSink,
+    da_atom: [VARIANT; 2],
+    pending: Rc<RefCell<Option<CompositionString>>>,
+}
+
+impl SetCompositionString {
+    pub(super) fn new(
+        context: ITfContext,
+        composition: Rc<RefCell<Option<ITfComposition>>>,
+        composition_sink: ITfCompositionSink,
+        da_atom: [VARIANT; 2],
+        pending: Rc<RefCell<Option<CompositionString>>>,
+    ) -> SetCompositionString {
+        Self {
+            context,
+            composition,
+            composition_sink,
+            da_atom,
+            pending,
+        }
+    }
+}
+
+impl ITfEditSession_Impl for SetCompositionString_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        unsafe {
+            if self.composition.borrow().is_none() && self.pending.borrow().is_some() {
+                debug!("starting a new composition");
+                let context_composition: ITfContextComposition = self.context.cast()?;
+                let insert_at_selection: ITfInsertAtSelection = self.context.cast()?;
+                let range = insert_at_selection.InsertTextAtSelection(ec, TF_IAS_QUERYONLY, &[])?;
+                // XXX even though MS document says pSink is optional,
+                // StartComposition fails if NULL is passed.
+                let composition =
+                    context_composition.StartComposition(ec, &range, &self.composition_sink);
+                if let Err(error) = &composition {
+                    error!("unable to start composition: {error}");
+                }
+                self.composition.replace(Some(composition?));
+            }
+            if let Some(composition) = self.composition.borrow().as_ref()
+                && let Some(pending) = self.pending.borrow().as_ref()
+            {
+                let range = composition.GetRange()?;
+                debug!(range:?, commit=pending.commit, preedit=pending.preedit; "set composition string");
+                let text = HSTRING::from(format!("{}{}", pending.commit, pending.preedit));
+                // Set text then shift the range to commit the string.
+                // It seems Cicero doesn't handle multiple edit session very well, so we do
+                // the commit and update composition in one single transaction.
+                if let Err(error) = range.SetText(ec, 0, &text) {
+                    error!("set composition string failed: {error}");
+                }
+                let mut moved = 0;
+                range.ShiftStart(
+                    ec,
+                    pending.commit.chars().count() as i32,
+                    &mut moved,
+                    ptr::null(),
+                )?;
+                composition.ShiftStart(ec, &range)?;
+                let disp_attr_prop = self.context.GetProperty(&GUID_PROP_ATTRIBUTE)?;
+                let mut atoms = self.da_atom.iter().cycle();
+                for seg in &pending.segments {
+                    let segment_range = range.Clone()?;
+                    segment_range.Collapse(ec, TF_ANCHOR_START)?;
+                    segment_range.ShiftEnd(ec, seg.1 as i32, &mut moved, ptr::null())?;
+                    segment_range.ShiftStart(ec, seg.0 as i32, &mut moved, ptr::null())?;
+                    if let Err(error) =
+                        disp_attr_prop.SetValue(ec, &segment_range, atoms.next().unwrap())
+                    {
+                        error!("set display attribute failed: {error}");
+                    }
+                }
+
+                let cursor_range = range.Clone()?;
+                let mut moved = 0;
+                cursor_range.Collapse(ec, TF_ANCHOR_START)?;
+                cursor_range.ShiftEnd(ec, pending.cursor as i32, &mut moved, ptr::null())?;
+                cursor_range.ShiftStart(ec, pending.cursor as i32, &mut moved, ptr::null())?;
+                set_selection(&self.context, ec, cursor_range, TF_AE_END)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[implement(ITfEditSession)]
+pub(super) struct EndComposition {
+    context: ITfContext,
+    composition: Rc<RefCell<Option<ITfComposition>>>,
+}
+
+impl EndComposition {
+    pub(super) fn new(
+        context: ITfContext,
+        composition: Rc<RefCell<Option<ITfComposition>>>,
+    ) -> EndComposition {
+        Self {
+            context,
+            composition,
+        }
+    }
+    pub(super) fn will_end_composition(
+        context: &ITfContext,
+        composition: &ITfComposition,
+        ec: u32,
+    ) -> Result<()> {
+        unsafe {
+            let composition_range = composition
+                .GetRange()
+                .inspect_err(|_| debug!("failed to get composition range"))?;
+            let disp_attr_prop = context.GetProperty(&GUID_PROP_ATTRIBUTE)?;
+            disp_attr_prop
+                .Clear(ec, &composition_range)
+                .inspect_err(|_| debug!("failed to clear display attribute"))?;
+
+            composition_range.Collapse(ec, TF_ANCHOR_END)?;
+            composition.ShiftStart(ec, &composition_range)?;
+            composition.ShiftEnd(ec, &composition_range)?;
+            set_selection(context, ec, composition_range, TF_AE_END)?;
+        }
+        Ok(())
+    }
+}
+
+impl ITfEditSession_Impl for EndComposition_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        debug!("end composition");
+        let Some(composition) = self.composition.take() else {
+            debug!("composition is none, skip");
+            return Ok(());
+        };
+        EndComposition::will_end_composition(&self.context, &composition, ec)
+            .inspect_err(|e| debug!("failed in finalize composition: {e:?}"))?;
+        unsafe {
+            composition
+                .EndComposition(ec)
+                .inspect_err(|e| debug!("failed in EndComposition: {e:?}"))?;
+        }
+        Ok(())
+    }
+}
+
+#[implement(ITfEditSession)]
+pub(super) struct SelectionRect {
+    context: ITfContext,
+    rect: Cell<RECT>,
+}
+
+impl SelectionRect {
+    pub(super) fn new(context: ITfContext) -> SelectionRect {
+        Self {
+            context,
+            rect: Cell::default(),
+        }
+    }
+    pub(super) fn rect(&self) -> RECT {
+        self.rect.get()
+    }
+}
+
+impl ITfEditSession_Impl for SelectionRect_Impl {
+    fn DoEditSession(&self, ec: u32) -> Result<()> {
+        let mut selection = [TF_SELECTION::default(); 1];
+        let mut selection_len = 0;
+        unsafe {
+            self.context.GetSelection(
+                ec,
+                TF_DEFAULT_SELECTION,
+                &mut selection,
+                &mut selection_len,
+            )?;
+            if let Some(sel_range) = &selection[0].range.deref() {
+                let view = self.context.GetActiveView()?;
+                let mut rc = RECT::default();
+                let mut clipped = BOOL::default();
+                view.GetTextExt(ec, sel_range, &mut rc, &mut clipped)?;
+                // Position is in application coordinate space. If we ever want to use a separate rendering
+                // process again, we need to translate this to global coordinate with
+                // LogicalToPhysicalPointForPerMonitorDPI.
+                self.rect.set(rc);
+            }
+        }
+        let [TF_SELECTION { range, .. }] = selection;
+        ManuallyDrop::into_inner(range);
+        Ok(())
+    }
+}

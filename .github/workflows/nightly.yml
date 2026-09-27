@@ -1,0 +1,54 @@
+name: Nightly Build
+
+env:
+  VER_MAJOR: 26
+  VER_MINOR: 9
+  VER_PATCH: 0
+
+on:
+  workflow_dispatch:
+
+jobs:
+  nightly-build:
+    uses: ./.github/workflows/ci.yml
+    with:
+      nightly: true
+  code-signing:
+    needs: [nightly-build]
+    uses: ./.github/workflows/code-signing.yml
+    with:
+      signing-policy-slug: release-signing
+      github-artifact-id: ${{ needs.nightly-build.outputs.unsigned-artifact-id }}
+    secrets:
+      api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+  nightly-release:
+    runs-on: ubuntu-latest
+    name: Nightly Release
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    needs: [code-signing]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+      - name: Download Installer Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: Installer Artifact
+          path: build/installer
+      - uses: actions/download-artifact@v8
+        with:
+          name: Signed Installer
+          path: dist
+      - name: GH Release
+        uses: softprops/action-gh-release@v3.0.0
+        with:
+          tag_name: nightly-${{env.VER_MAJOR}}.${{env.VER_MINOR}}.${{env.VER_PATCH}}.${{github.run_number}}
+          name: 預覽版 ${{env.VER_MAJOR}}.${{env.VER_MINOR}}.${{env.VER_PATCH}}.${{github.run_number}}
+          draft: true
+          prerelease: true
+          preserve_order: true
+          body: |
+            這是開發中的測試用版本。若不確定，請使用最新的穩定版。
+          files: |
+            dist/windows-chewing-tsf.msi
+            dist/windows-chewing-tsf.msi.sha256

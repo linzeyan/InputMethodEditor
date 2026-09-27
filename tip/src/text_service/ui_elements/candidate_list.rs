@@ -1,0 +1,743 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright (c) 2026 Kan-Ru Chen
+
+use std::{
+    cell::{Cell, RefCell},
+    ops::Div,
+    rc::{Rc, Weak},
+};
+
+use anyhow::{Context, Result};
+use chewing::input::keysym::{Keysym, SYM_DOWN, SYM_LEFT, SYM_RETURN, SYM_RIGHT, SYM_UP};
+use log::{debug, error};
+use scoped_error::expect_error;
+use windows::Win32::{
+    Foundation::{E_FAIL, E_INVALIDARG, HINSTANCE, HWND, LPARAM, LRESULT, POINT, TRUE, WPARAM},
+    Graphics::{
+        Direct2D::{
+            Common::{D2D_RECT_F, D2D1_COLOR_F},
+            D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1CreateFactory,
+            ID2D1DeviceContext, ID2D1Factory1,
+        },
+        DirectComposition::IDCompositionTarget,
+        DirectWrite::{
+            DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_TEXT_METRICS,
+            DWriteCreateFactory, IDWriteFactory1,
+        },
+        Dxgi::{
+            Common::DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGISwapChain1,
+        },
+        Gdi::{BeginPaint, EndPaint, PAINTSTRUCT},
+    },
+    UI::{
+        TextServices::{
+            ITfCandidateListUIElement, ITfCandidateListUIElement_Impl, ITfDocumentMgr,
+            ITfThreadMgr, ITfUIElement, ITfUIElement_Impl, ITfUIElementMgr, TF_CLUIE_COUNT,
+            TF_CLUIE_CURRENTPAGE, TF_CLUIE_DOCUMENTMGR, TF_CLUIE_PAGEINDEX, TF_CLUIE_SELECTION,
+            TF_CLUIE_STRING,
+        },
+        WindowsAndMessaging::{
+            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, RegisterClassExW,
+            WINDOWPOS, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN,
+            WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+        },
+    },
+};
+use windows_core::{
+    BOOL, BSTR, ComObject, ComObjectInner, GUID, HSTRING, Interface, PCWSTR,
+    Result as WindowsResult, implement, w,
+};
+
+use crate::{
+    text_service::ui_elements::UiError,
+    ui::{
+        gfx::{
+            clamp_point_to_monitor, create_render_target, create_swapchain,
+            create_swapchain_bitmap, d3d11_device, get_dpi_for_point, get_dpi_for_window,
+            setup_direct_composition,
+        },
+        window::Window,
+    },
+};
+
+use super::message_box::draw_message_box;
+
+#[implement(ITfUIElement, ITfCandidateListUIElement)]
+pub(crate) struct CandidateList {
+    thread_mgr: ITfThreadMgr,
+    element_id: Cell<u32>,
+    parent: HWND,
+    inner: Rc<CandidateListInner>,
+}
+
+struct CandidateListInner {
+    model: RefCell<Model>,
+    view: RefCell<View>,
+}
+
+#[derive(Default)]
+pub(crate) struct Model {
+    pub(crate) items: Vec<String>,
+    pub(crate) selkeys: Vec<u16>,
+    pub(crate) total_page: u32,
+    pub(crate) current_page: u32,
+    pub(crate) font_family: HSTRING,
+    pub(crate) font_size: f32,
+    pub(crate) cand_per_row: u32,
+    pub(crate) use_cursor: bool,
+    pub(crate) current_sel: usize,
+    pub(crate) selkey_color: D2D1_COLOR_F,
+    pub(crate) fg_color: D2D1_COLOR_F,
+    pub(crate) bg_color: D2D1_COLOR_F,
+    pub(crate) highlight_fg_color: D2D1_COLOR_F,
+    pub(crate) highlight_bg_color: D2D1_COLOR_F,
+    pub(crate) border_color: D2D1_COLOR_F,
+}
+
+pub(crate) enum FilterKeyResult {
+    Handled,
+    HandledCommit,
+    NotHandled,
+}
+
+extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    let get_this = || unsafe {
+        let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const CandidateListInner;
+        let weak = Weak::from_raw(ptr);
+        let this = weak.upgrade();
+        let _ = weak.into_raw();
+        this
+    };
+    match msg {
+        WM_NCDESTROY => unsafe {
+            let ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *const CandidateListInner;
+            let _ = Weak::from_raw(ptr);
+            LRESULT(0)
+        },
+        WM_PAINT => {
+            let Some(this) = get_this() else {
+                return LRESULT(1);
+            };
+            let view = this.view.borrow();
+            let model = this.model.borrow();
+            let mut ps = PAINTSTRUCT::default();
+            unsafe { BeginPaint(hwnd, &mut ps) };
+            let _ = view.on_paint(&model);
+            let _ = unsafe { EndPaint(hwnd, &ps) };
+            LRESULT(0)
+        }
+        WM_WINDOWPOSCHANGING => {
+            let pos = lparam.0 as *mut WINDOWPOS;
+            if let Some(pos) = unsafe { pos.as_mut() } {
+                let Some(this) = get_this() else {
+                    return LRESULT(1);
+                };
+                let view = this.view.borrow();
+                let model = this.model.borrow();
+                let dpi = get_dpi_for_point(POINT { x: pos.x, y: pos.y });
+                if let Ok(size) = view.calculate_client_rect(&model, dpi) {
+                    pos.cx = size.hw_width as i32;
+                    pos.cy = size.hw_height as i32;
+                    (pos.x, pos.y) = clamp_point_to_monitor(pos.x, pos.y, pos.cx, pos.cy);
+                }
+            }
+            LRESULT(0)
+        }
+        _ => crate::ui::window::wnd_proc(hwnd, msg, wparam, lparam),
+    }
+}
+
+enum View {
+    Dummy,
+    Rendered {
+        _factory: ID2D1Factory1,
+        _dcomptarget: IDCompositionTarget,
+        dwrite_factory: IDWriteFactory1,
+        target: ID2D1DeviceContext,
+        swapchain: IDXGISwapChain1,
+        window: Window,
+    },
+}
+
+#[derive(Debug, Default)]
+struct RenderedMetrics {
+    width: f32,
+    height: f32,
+    hw_width: f32,
+    hw_height: f32,
+    selkey_width: f32,
+    text_width: f32,
+    item_height: f32,
+}
+
+impl View {
+    fn rendered(parent: HWND, user_data: Weak<CandidateListInner>) -> Result<View, UiError> {
+        expect_error("Failed to create new RenderedView", || {
+            let window = Window::new();
+            window.create(
+                parent,
+                w!("ChewingCandidateListWindow"),
+                WS_POPUP | WS_CLIPCHILDREN,
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                user_data.into_raw().cast(),
+            );
+            unsafe {
+                let factory: ID2D1Factory1 =
+                    D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, None)?;
+                let dwrite_factory: IDWriteFactory1 =
+                    DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)?;
+                let device = d3d11_device()?;
+                let target = create_render_target(&factory, &device)?;
+                let swapchain = create_swapchain(&device, 10, 10)?;
+                let dpi = get_dpi_for_window(window.hwnd());
+                target.SetDpi(dpi, dpi);
+                create_swapchain_bitmap(&swapchain, &target)?;
+                let dcomptarget = setup_direct_composition(&device, window.hwnd(), &swapchain)?;
+                Ok(View::Rendered {
+                    _factory: factory,
+                    _dcomptarget: dcomptarget,
+                    dwrite_factory,
+                    target,
+                    swapchain,
+                    window,
+                })
+            }
+        })
+    }
+}
+
+const ROW_SPACING: f32 = 4.0;
+const COL_SPACING: f32 = 8.0;
+
+impl View {
+    fn window(&self) -> Option<&Window> {
+        match self {
+            View::Dummy => None,
+            View::Rendered { window, .. } => Some(window),
+        }
+    }
+    fn calculate_client_rect(&self, model: &Model, dpi: f32) -> Result<RenderedMetrics> {
+        match self {
+            View::Dummy => Ok(RenderedMetrics::default()),
+            View::Rendered { dwrite_factory, .. } => {
+                // Create a text format for the candidate list
+                let scale = dpi / 96.0;
+                let text_format = unsafe {
+                    dwrite_factory.CreateTextFormat(
+                        &model.font_family,
+                        None,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        model.font_size,
+                        w!("zh-TW"),
+                    )?
+                };
+                let page_number_format = unsafe {
+                    dwrite_factory.CreateTextFormat(
+                        &model.font_family,
+                        None,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        model.font_size.div(1.5).clamp(0.0, f32::MAX),
+                        w!("zh-TW"),
+                    )?
+                };
+                // Recalculate the size of the window
+                let margin: f32 = 10.0;
+                let mut selkey_width: f32 = 0.0;
+                let mut text_width: f32 = 0.0;
+                let mut item_height: f32 = 0.0;
+                let mut selkey = "?.".to_string().encode_utf16().collect::<Vec<_>>();
+                for (key, text) in model.selkeys.iter().zip(model.items.iter()) {
+                    let mut selkey_metrics = DWRITE_TEXT_METRICS::default();
+                    let mut item_metrics = DWRITE_TEXT_METRICS::default();
+
+                    selkey[0] = *key;
+                    unsafe {
+                        dwrite_factory
+                            .CreateTextLayout(&selkey, &text_format, f32::MAX, f32::MAX)?
+                            .GetMetrics(&mut selkey_metrics)?;
+
+                        dwrite_factory
+                            .CreateTextLayout(
+                                &HSTRING::from(text),
+                                &text_format,
+                                f32::MAX,
+                                f32::MAX,
+                            )?
+                            .GetMetrics(&mut item_metrics)?;
+                    }
+
+                    selkey_width =
+                        selkey_width.max(selkey_metrics.widthIncludingTrailingWhitespace);
+                    text_width = text_width.max(item_metrics.widthIncludingTrailingWhitespace);
+                    item_height = item_height
+                        .max(item_metrics.height)
+                        .max(selkey_metrics.height);
+                }
+                selkey_width += 1.0;
+
+                let page_number =
+                    HSTRING::from(format!("{} / {}", model.current_page, model.total_page));
+
+                // Calculate the size of the page_numer box
+                let mut metrics = DWRITE_TEXT_METRICS::default();
+                unsafe {
+                    dwrite_factory
+                        .CreateTextLayout(&page_number, &page_number_format, f32::MAX, f32::MAX)?
+                        .GetMetrics(&mut metrics)?;
+                }
+
+                let items_len = model.items.len() as f32;
+                let cand_per_row = items_len
+                    .min(model.cand_per_row as f32)
+                    .clamp(1.0, f32::MAX);
+                let rows = (items_len / cand_per_row).clamp(1.0, f32::MAX).ceil();
+                let width = cand_per_row * (selkey_width + text_width)
+                    + (cand_per_row - 1.0) * COL_SPACING
+                    + 2.0 * margin;
+                let height = rows * item_height + (rows - 1.0) * ROW_SPACING + 2.0 * margin;
+                let window_width = width.max(metrics.width + margin);
+                let window_height = height + metrics.height + margin + 2.0;
+
+                // Convert to HW pixels
+                let hw_width = (window_width * scale + 25.0).ceil();
+                let hw_height = (window_height * scale + 25.0).ceil();
+                Ok(RenderedMetrics {
+                    width,
+                    height,
+                    hw_width,
+                    hw_height,
+                    selkey_width,
+                    text_width,
+                    item_height,
+                })
+            }
+        }
+    }
+    fn on_paint(&self, model: &Model) -> Result<()> {
+        match self {
+            View::Dummy => Ok(()),
+            View::Rendered {
+                dwrite_factory,
+                target,
+                swapchain,
+                window,
+                ..
+            } => {
+                if model.items.is_empty() {
+                    return Ok(());
+                }
+                // Create a text format for the candidate list
+                let text_format = unsafe {
+                    dwrite_factory.CreateTextFormat(
+                        &model.font_family,
+                        None,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        model.font_size,
+                        w!("zh-TW"),
+                    )?
+                };
+                let page_number_format = unsafe {
+                    dwrite_factory.CreateTextFormat(
+                        &model.font_family,
+                        None,
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        model.font_size.div(1.5).clamp(0.0, f32::MAX),
+                        w!("zh-TW"),
+                    )?
+                };
+
+                let dpi = get_dpi_for_window(window.hwnd());
+                let rm = self.calculate_client_rect(model, dpi)?;
+                debug!("calculat client rect on_paint: {rm:?}");
+                let RenderedMetrics {
+                    width,
+                    height,
+                    hw_width,
+                    hw_height,
+                    selkey_width,
+                    text_width,
+                    item_height,
+                } = rm;
+                unsafe {
+                    target.SetTarget(None);
+                    swapchain.ResizeBuffers(
+                        0,
+                        hw_width as u32,
+                        hw_height as u32,
+                        DXGI_FORMAT_B8G8R8A8_UNORM,
+                        DXGI_SWAP_CHAIN_FLAG(0),
+                    )?;
+                    target.SetDpi(dpi, dpi);
+                }
+                create_swapchain_bitmap(&swapchain, &target)?;
+
+                // Begin drawing
+                let dc = target;
+                unsafe {
+                    dc.BeginDraw();
+
+                    let mut col = 0;
+                    let margin = 10.0;
+                    let mut x = margin;
+                    let mut y = margin;
+
+                    let page_number =
+                        HSTRING::from(format!("{} / {}", model.current_page, model.total_page));
+
+                    // Calculate the size of the page_numer box
+                    let mut metrics = DWRITE_TEXT_METRICS::default();
+                    dwrite_factory
+                        .CreateTextLayout(&page_number, &page_number_format, f32::MAX, f32::MAX)?
+                        .GetMetrics(&mut metrics)?;
+
+                    // Draw the background of the main message box
+                    draw_message_box(
+                        dc,
+                        0.0,
+                        0.0,
+                        width,
+                        height,
+                        model.bg_color,
+                        model.border_color,
+                    )?;
+                    // Draw the background of the page_number box
+                    draw_message_box(
+                        dc,
+                        width - metrics.width - margin,
+                        height + 2.0,
+                        metrics.width + margin,
+                        metrics.height + margin,
+                        model.bg_color,
+                        model.border_color,
+                    )?;
+
+                    let selkey_brush = dc.CreateSolidColorBrush(&model.selkey_color, None)?;
+                    let text_brush = dc.CreateSolidColorBrush(&model.fg_color, None)?;
+                    let highlight_brush =
+                        dc.CreateSolidColorBrush(&model.highlight_bg_color, None)?;
+                    let selected_text_brush =
+                        dc.CreateSolidColorBrush(&model.highlight_fg_color, None)?;
+
+                    dc.DrawText(
+                        &page_number,
+                        &page_number_format,
+                        &D2D_RECT_F {
+                            left: width - metrics.width - margin / 2.0,
+                            top: height + 2.0 + margin / 2.0,
+                            right: f32::MAX,
+                            bottom: f32::MAX,
+                        },
+                        &text_brush,
+                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        DWRITE_MEASURING_MODE_NATURAL,
+                    );
+
+                    for i in 0..model.items.len() {
+                        let mut text_rect = D2D_RECT_F {
+                            left: x,
+                            top: y,
+                            right: x + selkey_width + text_width,
+                            bottom: y + item_height,
+                        };
+                        let mut selkey = "?.".to_string().encode_utf16().collect::<Vec<_>>();
+                        selkey[0] = model.selkeys.get(i.clamp(0, 9)).cloned().unwrap_or(0x3F);
+
+                        dc.DrawText(
+                            &selkey,
+                            &text_format,
+                            &text_rect,
+                            &selkey_brush,
+                            D2D1_DRAW_TEXT_OPTIONS_NONE,
+                            DWRITE_MEASURING_MODE_NATURAL,
+                        );
+
+                        text_rect.left += selkey_width;
+                        text_rect.right = text_rect.left + text_width;
+
+                        if let Some(item) = model.items.get(i) {
+                            let text = HSTRING::from(item);
+
+                            if model.use_cursor && i == model.current_sel {
+                                dc.FillRectangle(&text_rect, &highlight_brush);
+                                dc.DrawText(
+                                    &text,
+                                    &text_format,
+                                    &text_rect,
+                                    &selected_text_brush,
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                    DWRITE_MEASURING_MODE_NATURAL,
+                                );
+                            } else {
+                                dc.DrawText(
+                                    &text,
+                                    &text_format,
+                                    &text_rect,
+                                    &text_brush,
+                                    D2D1_DRAW_TEXT_OPTIONS_NONE,
+                                    DWRITE_MEASURING_MODE_NATURAL,
+                                );
+                            }
+                        }
+
+                        col += 1;
+                        if col >= model.cand_per_row {
+                            col = 0;
+                            x = margin;
+                            y += item_height + ROW_SPACING;
+                        } else {
+                            x += selkey_width + text_width + COL_SPACING;
+                        }
+                    }
+
+                    dc.EndDraw(None, None)?;
+
+                    // Present the draw buffer
+                    swapchain
+                        .Present(1, DXGI_PRESENT(0))
+                        .ok()
+                        .context("unable to present buffer")?;
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
+
+impl CandidateList {
+    pub(crate) fn window_register_class(hinst: HINSTANCE) {
+        let wc = WNDCLASSEXW {
+            cbSize: size_of::<WNDCLASSEXW>() as u32,
+            style: CS_IME,
+            lpfnWndProc: Some(wnd_proc),
+            cbClsExtra: 0,
+            cbWndExtra: 0,
+            hInstance: hinst,
+            hCursor: unsafe { LoadCursorW(None, IDC_ARROW).unwrap_or_default() },
+            lpszMenuName: PCWSTR::null(),
+            lpszClassName: w!("ChewingCandidateListWindow"),
+            ..Default::default()
+        };
+        unsafe { RegisterClassExW(&wc) };
+    }
+    pub(crate) fn new(parent: HWND, thread_mgr: ITfThreadMgr) -> Result<ComObject<CandidateList>> {
+        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
+        let inner = Rc::new(CandidateListInner {
+            model: RefCell::new(Model::default()),
+            view: RefCell::new(View::Dummy),
+        });
+        let candidate_list = CandidateList {
+            thread_mgr,
+            element_id: Cell::new(0),
+            parent,
+            inner,
+        }
+        .into_object();
+        let mut should_show = TRUE;
+        let mut ui_element_id = 0;
+        let ui_element: ITfUIElement = candidate_list.cast()?;
+        unsafe {
+            ui_manager.BeginUIElement(&ui_element, &mut should_show, &mut ui_element_id)?;
+            candidate_list.set_element_id(ui_element_id);
+            candidate_list.Show(should_show)?;
+        }
+        Ok(candidate_list)
+    }
+    pub(crate) fn end_ui_element(&self) {
+        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = self.thread_mgr.cast()
+        else {
+            error!("unable to cast thread manager to ITfUIElementMgr");
+            return;
+        };
+        unsafe {
+            let _ = ui_manager.EndUIElement(self.element_id.get());
+        }
+    }
+    fn set_element_id(&self, id: u32) {
+        self.element_id.set(id);
+    }
+    fn update_ui_element(&self) -> Result<()> {
+        let ui_manager: ITfUIElementMgr = self.thread_mgr.cast()?;
+        unsafe {
+            ui_manager.UpdateUIElement(self.element_id.get())?;
+        }
+        Ok(())
+    }
+    pub(crate) fn set_model(&self, model: Model) {
+        *self.inner.model.borrow_mut() = model;
+        if let Err(error) = self.update_ui_element() {
+            error!("Failed to update UI element: {error}");
+        }
+    }
+    pub(crate) fn filter_key_event(&self, ksym: Keysym) -> FilterKeyResult {
+        let mut res = FilterKeyResult::NotHandled;
+        {
+            let mut model = self.inner.model.borrow_mut();
+            let old_sel = model.current_sel;
+            let uiless_mode = self.inner.view.borrow().window().is_none();
+            if uiless_mode {
+                match ksym {
+                    SYM_DOWN | SYM_RIGHT => {
+                        model.current_sel = model
+                            .current_sel
+                            .saturating_add(1)
+                            .clamp(0, model.items.len() - 1);
+                    }
+                    SYM_UP | SYM_LEFT => {
+                        model.current_sel = model.current_sel.saturating_sub(1);
+                    }
+                    SYM_RETURN => {
+                        res = FilterKeyResult::HandledCommit;
+                    }
+                    _ => res = FilterKeyResult::NotHandled,
+                }
+            } else {
+                let cand_per_row = model.cand_per_row as usize;
+                match ksym {
+                    SYM_UP => {
+                        if model.current_sel >= cand_per_row {
+                            model.current_sel -= cand_per_row;
+                        }
+                    }
+                    SYM_DOWN => {
+                        if model.current_sel + cand_per_row < model.items.len() {
+                            model.current_sel += cand_per_row;
+                        }
+                    }
+                    SYM_LEFT => {
+                        if cand_per_row > 1 {
+                            model.current_sel = model.current_sel.saturating_sub(1);
+                        }
+                    }
+                    SYM_RIGHT => {
+                        if cand_per_row > 1 {
+                            model.current_sel = model
+                                .current_sel
+                                .saturating_add(1)
+                                .clamp(0, model.items.len() - 1);
+                        }
+                    }
+                    SYM_RETURN => {
+                        res = FilterKeyResult::HandledCommit;
+                    }
+                    _ => res = FilterKeyResult::NotHandled,
+                }
+            }
+
+            if model.current_sel != old_sel {
+                res = FilterKeyResult::Handled;
+            }
+        }
+        if let Err(error) = self.update_ui_element() {
+            error!("Failed to update UI element: {error}");
+        }
+        res
+    }
+    pub(crate) fn current_sel(&self) -> usize {
+        self.inner.model.borrow().current_sel
+    }
+    pub(crate) fn current_phrase(&self) -> String {
+        let sel = self.current_sel();
+        self.inner.model.borrow().items[sel].clone()
+    }
+    pub(crate) fn set_position(&self, x: i32, y: i32) {
+        let view = self.inner.view.borrow();
+        if let Some(window) = view.window() {
+            window.set_position(x, y);
+        }
+    }
+    pub(crate) fn show(&self) {
+        if let Some(window) = self.inner.view.borrow().window() {
+            window.refresh();
+            window.show();
+        }
+    }
+}
+
+impl ITfUIElement_Impl for CandidateList_Impl {
+    fn GetDescription(&self) -> WindowsResult<BSTR> {
+        Ok(BSTR::from("Candidate List"))
+    }
+
+    fn GetGUID(&self) -> WindowsResult<GUID> {
+        Ok(GUID::from_u128(0x4b7f55c3_2ae5_4077_a1c0_d17c5cb3c88a))
+    }
+
+    fn Show(&self, show: BOOL) -> WindowsResult<()> {
+        if show.as_bool() {
+            let inner = Rc::downgrade(&self.inner);
+            let view = View::rendered(self.parent, inner).map_err(|_| E_FAIL)?;
+            self.inner.view.replace(view);
+            self.show();
+        } else {
+            self.inner.view.replace(View::Dummy);
+        }
+        Ok(())
+    }
+
+    fn IsShown(&self) -> WindowsResult<BOOL> {
+        Ok(self.inner.view.borrow().window().is_some().into())
+    }
+}
+
+impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
+    fn GetUpdatedFlags(&self) -> WindowsResult<u32> {
+        Ok(TF_CLUIE_DOCUMENTMGR
+            | TF_CLUIE_COUNT
+            | TF_CLUIE_SELECTION
+            | TF_CLUIE_STRING
+            | TF_CLUIE_PAGEINDEX
+            | TF_CLUIE_CURRENTPAGE)
+    }
+
+    fn GetDocumentMgr(&self) -> WindowsResult<ITfDocumentMgr> {
+        unsafe { self.thread_mgr.GetFocus() }
+    }
+
+    fn GetCount(&self) -> WindowsResult<u32> {
+        let model = self.inner.model.borrow();
+        Ok(model.items.len() as u32)
+    }
+
+    fn GetSelection(&self) -> WindowsResult<u32> {
+        let model = self.inner.model.borrow();
+        Ok(model.current_sel as u32)
+    }
+
+    fn GetString(&self, uindex: u32) -> WindowsResult<BSTR> {
+        let model = self.inner.model.borrow();
+        if uindex as usize >= model.items.len() {
+            return Err(E_INVALIDARG.into());
+        }
+        Ok(BSTR::from(model.items[uindex as usize].clone()))
+    }
+
+    fn GetPageIndex(
+        &self,
+        _pindex: *mut u32,
+        _usize: u32,
+        pupagecnt: *mut u32,
+    ) -> WindowsResult<()> {
+        unsafe {
+            *pupagecnt = 1; // Assuming single page for simplicity
+        }
+        Ok(())
+    }
+
+    fn SetPageIndex(&self, _pindex: *const u32, _upagecnt: u32) -> WindowsResult<()> {
+        Ok(())
+    }
+
+    fn GetCurrentPage(&self) -> WindowsResult<u32> {
+        Ok(0) // Assuming single page for simplicity
+    }
+}

@@ -1,0 +1,175 @@
+#pragma code_page(65001) // UTF-8
+
+// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#include <winresrc.h>
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// Chinese (Traditional, Taiwan) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHT)
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_TRADITIONAL
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE
+BEGIN
+    "#include <winresrc.h>\0"
+END
+
+3 TEXTINCLUDE
+BEGIN
+    "\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+#include "version.rc"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+101                     ICON                    "mainicon.ico"
+102                     ICON                    "mainicon2.ico"
+IDI_CHI                 ICON                    "chi.ico"
+IDI_CHI_DARK            ICON                    "chi_dark.ico"
+IDI_CONFIG              ICON                    "config.ico"
+IDI_ENG                 ICON                    "eng.ico"
+IDI_ENG_DARK            ICON                    "eng_dark.ico"
+IDI_SIMP                ICON                    "simp.ico"
+IDI_SIMP_DARK           ICON                    "simp_dark.ico"
+IDI_CHI_DOT             ICON                    "chi_dot.ico"
+IDI_CHI_DARK_DOT        ICON                    "chi_dark_dot.ico"
+IDI_ENG_DOT             ICON                    "eng_dot.ico"
+IDI_ENG_DARK_DOT        ICON                    "eng_dark_dot.ico"
+IDI_SIMP_DOT            ICON                    "simp_dot.ico"
+IDI_SIMP_DARK_DOT       ICON                    "simp_dark_dot.ico"
+IDI_FULL_SHAPE          ICON                    "full.ico"
+IDI_HALF_SHAPE          ICON                    "half.ico"
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION VER_FILEVERSION
+ PRODUCTVERSION VER_PRODUCTVERSION
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x0L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040404b0"
+        BEGIN
+            VALUE "CompanyName", "Chewing"
+            VALUE "FileDescription", "新酷音輸入法"
+            VALUE "FileVersion", VER_FILEVERSION_STR
+            VALUE "InternalName", "ChewingTextService.dll"
+            VALUE "LegalCopyright", "Copyright (C) 2013-2025"
+            VALUE "OriginalFilename", "ChewingTextService.dll"
+            VALUE "ProductName", "新酷音輸入法"
+            VALUE "ProductVersion", VER_PRODUCTVERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x404, 1200
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Menu
+//
+
+IDR_MENU MENU
+BEGIN
+    POPUP "POPUP"
+    BEGIN
+        MENUITEM "有新版本可以下載(&U)",                ID_CHECK_NEW_VER
+        MENUITEM "關於新酷音輸入法(&A)",                ID_ABOUT
+        MENUITEM "參觀新酷音官方網站(&W)",               ID_WEBSITE
+        MENUITEM "新酷音線上討論區(&G)",                ID_GROUP
+        MENUITEM SEPARATOR
+        MENUITEM "軟體本身的建議及錯誤回報(&B)",            ID_BUGREPORT
+        MENUITEM "注音及選字選詞錯誤回報 (&P)",            ID_DICT_BUGREPORT
+        MENUITEM SEPARATOR
+        MENUITEM "新酷音使用說明 (&H)",                ID_CHEWING_HELP
+        MENUITEM "編輯使用者詞庫 (&E)",                 ID_HASHED
+        MENUITEM "設定新酷音輸入法(&C)",                ID_CONFIG
+        MENUITEM SEPARATOR
+        POPUP "網路辭典 (&D)"
+        BEGIN
+            MENUITEM "萌典 (moedict)",                ID_MOEDICT
+            MENUITEM SEPARATOR
+            MENUITEM "教育部國語辭典",                     ID_DICT
+            MENUITEM "教育部國語辭典簡編本",                  ID_SIMPDICT
+            MENUITEM "教育部國語小字典",                    ID_LITTLEDICT
+            MENUITEM "教育部成語典",                      ID_PROVERBDICT
+        END
+        MENUITEM "輸出全形英數字母 (&F)",             ID_SWITCH_SHAPE
+        MENUITEM "輸出簡體中文 (&S)",                 ID_OUTPUT_SIMP_CHINESE
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDS_CHEWING             "新酷音輸入法"
+    IDS_SWITCH_SHAPE        "全形/半形切換"
+    IDS_SWITCH_LANG         "中文/英文切換"
+    IDS_SETTINGS            "設定/工具選單"
+    IDS_CONFIG_TITLE        "設定新酷音輸入法"
+END
+
+#endif    // Chinese (Traditional, Taiwan) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED

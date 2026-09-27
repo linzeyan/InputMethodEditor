@@ -1,0 +1,63 @@
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use scoped_error::{expect_error, impl_context_error};
+use windows_registry::CURRENT_USER;
+
+use super::version;
+
+pub(crate) struct CheckUpdateConfig {
+    pub(crate) enabled: bool,
+    pub(crate) channel: String,
+    pub(crate) current_update_info_url: String,
+    pub(crate) last_update_check_time: u64,
+}
+
+pub(crate) fn get_check_update_config() -> Result<CheckUpdateConfig, UpdateError> {
+    expect_error("Failed to get update config from registry", || {
+        let key = CURRENT_USER.create(r"Software\ChewingTextService")?;
+        let channel = match key.get_string("AutoCheckUpdateChannel") {
+            Ok(ch) => ch,
+            Err(_) => {
+                let dll_channel = version::chewing_dll_channel();
+                let _ = key.set_string("AutoCheckUpdateChannel", &dll_channel);
+                dll_channel
+            }
+        };
+        let enabled = channel == "stable" || channel == "development";
+        let current_update_info_url = key.get_string("UpdateInfoUrl").unwrap_or_default();
+        let last_update_check_time = key.get_u64("LastUpdateCheckTime").unwrap_or_default();
+        Ok(CheckUpdateConfig {
+            enabled,
+            channel,
+            current_update_info_url,
+            last_update_check_time,
+        })
+    })
+}
+
+pub(crate) fn set_update_info_url(url: &str) -> Result<(), UpdateError> {
+    expect_error("Failed to set update info URL", || {
+        let key = CURRENT_USER.create(r"Software\ChewingTextService")?;
+        if url.is_empty() {
+            key.remove_value("UpdateInfoUrl")?;
+        } else {
+            key.set_string("UpdateInfoUrl", &url)?;
+        }
+        Ok(())
+    })
+}
+
+pub(crate) fn set_last_update_check_time() -> Result<(), UpdateError> {
+    expect_error("Failed to set last update checking timestamp", || {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .as_ref()
+            .map(Duration::as_secs)
+            .unwrap_or_default();
+        let key = CURRENT_USER.create(r"Software\ChewingTextService")?;
+        key.set_u64("LastUpdateCheckTime", now)?;
+        Ok(())
+    })
+}
+
+impl_context_error!(UpdateError);
