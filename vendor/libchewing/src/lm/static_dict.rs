@@ -163,7 +163,7 @@ impl StaticDict {
                     return false;
                 }
                 if let Ok(syllable) = Syllable::try_from(n) {
-                    syllable.starts_with(*syl)
+                    syllable.fuzzy_matches(*syl)
                 } else {
                     false
                 }

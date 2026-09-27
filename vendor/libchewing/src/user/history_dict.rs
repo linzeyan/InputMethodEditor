@@ -6,7 +6,6 @@ use std::{
     collections::{BTreeMap, btree_map::Entry},
     fs::File,
     io::{BufRead, BufReader, Write},
-    ops::Bound::{Excluded, Included},
     path::Path,
     sync::{Arc, RwLock},
 };
@@ -418,23 +417,16 @@ impl HistoryDict {
                         .collect()
                 })
                 .unwrap_or_default(),
-            LookupStrategy::FuzzyPartialPrefix => {
-                let mut end = syllables.to_vec();
-                // NB: relies on the syllable encoding to
-                // ensure Syllable::EMPTY is greater than all real syllables.
-                end.push(Syllable::new());
-                lock.unigrams
-                    .range::<[Syllable], _>((Included(syllables), Excluded(end.as_slice())))
-                    .flat_map(|(_, entries)| {
-                        entries.iter().map(|e| {
-                            let wid = e.wid;
-                            let count = effective_count(e.count, g, e.last_gen, h);
-                            let logprob10 = (count as f64 / denominator).log10();
-                            (wid, logprob10)
-                        })
+            LookupStrategy::FuzzyPartialPrefix => super::fuzzy_records(&lock.unigrams, syllables)
+                .flat_map(|(_, entries)| {
+                    entries.iter().map(|e| {
+                        let wid = e.wid;
+                        let count = effective_count(e.count, g, e.last_gen, h);
+                        let logprob10 = (count as f64 / denominator).log10();
+                        (wid, logprob10)
                     })
-                    .collect()
-            }
+                })
+                .collect(),
         }
     }
     /// Returns bigram probability in log10 space.

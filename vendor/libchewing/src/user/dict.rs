@@ -5,7 +5,6 @@ use std::{
     fmt::Display,
     fs::File,
     io::{BufRead, BufReader, Write},
-    ops::Bound::{Excluded, Included},
     path::Path,
     str::FromStr,
     sync::{Arc, RwLock},
@@ -203,16 +202,9 @@ impl UserDict {
                 .get(syllables)
                 .map(|entries| entries.iter().map(|e| (e.wid, e.boost)).collect())
                 .unwrap_or_default(),
-            LookupStrategy::FuzzyPartialPrefix => {
-                let mut end = syllables.to_vec();
-                // NB: relies on the syllable encoding to
-                // ensure Syllable::EMPTY is greater than all real syllables.
-                end.push(Syllable::new());
-                lock.records
-                    .range::<[Syllable], _>((Included(syllables), Excluded(end.as_slice())))
-                    .flat_map(|(_, entries)| entries.iter().map(|e| (e.wid, e.boost)))
-                    .collect()
-            }
+            LookupStrategy::FuzzyPartialPrefix => super::fuzzy_records(&lock.records, syllables)
+                .flat_map(|(_, entries)| entries.iter().map(|e| (e.wid, e.boost)))
+                .collect(),
         }
     }
     pub fn entries(&self) -> impl Iterator<Item = (SyllableVec, String)> + '_ {

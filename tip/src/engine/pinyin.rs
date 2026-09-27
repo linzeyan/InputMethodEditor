@@ -172,21 +172,35 @@ fn is_syllable_or_initial(pinyin: &str) -> bool {
     INITIALS.contains(&pinyin) || SYLLABLES.split_whitespace().any(|it| it == pinyin)
 }
 
+/// The syllable `pinyin` stands for: a whole syllable is itself (whatever
+/// its tone), while an initial typed alone, or a syllable not typed to its
+/// end, stands for any syllable with that initial.
 fn to_syllable(pinyin: &str) -> Syllable {
-    match pinyin {
-        // libchewing takes no y or w alone; their syllables start with ㄧ or ㄨ.
-        "y" => syl![Bopomofo::I],
-        "w" => syl![Bopomofo::U],
-        _ => {
-            // libchewing knows the spelling rules (zhi has no rime, ju is ㄐㄩ).
-            let mut editor = Pinyin::hanyu();
-            for letter in pinyin.chars() {
-                editor.key_press(KeyboardEvent::builder().ksym(Keysym::from(letter)).build());
-            }
-            editor.key_press(end_syllable());
-            editor.read()
-        }
+    if SYLLABLES.split_whitespace().any(|it| it == pinyin) {
+        return parse(pinyin);
     }
+    // zh, not z, in zhon.
+    let initial = INITIALS
+        .iter()
+        .filter(|it| pinyin.starts_with(**it))
+        .max_by_key(|it| it.len());
+    match initial {
+        // libchewing takes no y or w alone; their syllables start with ㄧ or ㄨ.
+        Some(&"y") => syl![Bopomofo::I].abbreviate(),
+        Some(&"w") => syl![Bopomofo::U].abbreviate(),
+        Some(initial) => parse(initial).abbreviate(),
+        None => parse(pinyin),
+    }
+}
+
+fn parse(pinyin: &str) -> Syllable {
+    // libchewing knows the spelling rules (zhi has no rime, ju is ㄐㄩ).
+    let mut editor = Pinyin::hanyu();
+    for letter in pinyin.chars() {
+        editor.key_press(KeyboardEvent::builder().ksym(Keysym::from(letter)).build());
+    }
+    editor.key_press(end_syllable());
+    editor.read()
 }
 
 #[cfg(test)]
@@ -241,6 +255,16 @@ mod tests {
         assert_eq!(syllables("zhg"), ["ㄓ", "ㄍ"]);
         assert_eq!(syllables("bj"), ["ㄅ", "ㄐ"]);
         assert_eq!(syllables("yg"), ["ㄧ", "ㄍ"]);
+    }
+
+    #[test]
+    fn initials_alone_are_abbreviations() {
+        // zhi and zh are both ㄓ; only zh may be 這 (ㄓㄜˋ).
+        assert!(!to_syllable("zhi").is_abbreviation());
+        assert!(to_syllable("zh").is_abbreviation());
+        assert!(to_syllable("y").is_abbreviation());
+        // Space after an unfinished syllable.
+        assert_eq!(to_syllable("zhon"), to_syllable("zh"));
     }
 
     #[test]

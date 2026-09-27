@@ -282,6 +282,40 @@ impl Syllable {
         let other_prefix = other.to_u16() >> mask;
         self_prefix == other_prefix
     }
+    /// Tone bits no tone uses. They mark a pinyin abbreviation, which is
+    /// otherwise the same syllable as a whole one: sh and shi are both ㄕ.
+    const ABBREVIATION: u16 = 0b111;
+    /// Marks the syllable as a pinyin abbreviation: it stands for any
+    /// syllable it starts, as zh does in zhg (這個).
+    pub fn abbreviate(self) -> Syllable {
+        Syllable {
+            value: self.value | Self::ABBREVIATION,
+        }
+    }
+    /// Returns whether the syllable is a pinyin abbreviation.
+    pub fn is_abbreviation(&self) -> bool {
+        self.value.get() & 0b111 == Self::ABBREVIATION
+    }
+    /// Returns whether the syllable is one that the typed `query` can mean
+    /// in [`FuzzyPartialPrefix`](crate::dictionary::LookupStrategy) lookups:
+    /// itself when the query has a tone, any of its tones when not, and any
+    /// syllable starting with an abbreviation. Pinyin y stands for ㄩ too
+    /// (yu, yuan), which the ㄧ it is kept as doesn't start.
+    pub fn fuzzy_matches(&self, query: Syllable) -> bool {
+        if query.is_abbreviation() {
+            let mut query = query;
+            query.remove_tone();
+            self.starts_with(query)
+                || query.initial().is_none()
+                    && query.medial() == Some(Bopomofo::I)
+                    && self.initial().is_none()
+                    && self.medial() == Some(Bopomofo::IU)
+        } else if query.has_tone() {
+            *self == query
+        } else {
+            self.to_u16() >> 3 == query.to_u16() >> 3
+        }
+    }
     /// Returns the `Syllable` encoded in a u16 integer.
     ///
     /// There are 21 initials, 3 medial, 13 rimes, 5 tones.
@@ -644,6 +678,28 @@ mod test {
             !syl![Bopomofo::X, Bopomofo::I, Bopomofo::EN, Bopomofo::TONE4]
                 .starts_with(syl![Bopomofo::Q])
         );
+    }
+
+    #[test]
+    fn fuzzy_matches_tells_whole_syllables_from_abbreviations() {
+        use Bopomofo::*;
+        // Pinyin yi is ㄧ, a whole syllable: not ㄧㄡ (又).
+        assert!(syl![I, TONE1].fuzzy_matches(syl![I]));
+        assert!(!syl![I, OU, TONE4].fuzzy_matches(syl![I]));
+        // An abbreviation stands for any syllable it starts, and sh is ㄕ
+        // like shi.
+        assert!(syl![SH, U, TONE1].fuzzy_matches(syl![SH].abbreviate()));
+        assert!(!syl![SH, U, TONE1].fuzzy_matches(syl![SH]));
+        // y is kept as ㄧ, but yu, yuan and yun start with ㄩ.
+        assert!(syl![I, EN, TONE2].fuzzy_matches(syl![I].abbreviate()));
+        assert!(syl![IU, AN, TONE2].fuzzy_matches(syl![I].abbreviate()));
+        assert!(!syl![U, O, TONE3].fuzzy_matches(syl![I].abbreviate()));
+        assert!(!syl![J, IU, TONE3].fuzzy_matches(syl![I].abbreviate()));
+        // A tone narrows it to one syllable.
+        assert!(syl![M, A, TONE3].fuzzy_matches(syl![M, A, TONE3]));
+        assert!(!syl![M, A, TONE4].fuzzy_matches(syl![M, A, TONE3]));
+        // The mark shows as no tone.
+        assert_eq!(syl![ZH].abbreviate().to_string(), "ㄓ");
     }
 
     #[test]
