@@ -1,8 +1,10 @@
 # InputMethodEditor
 
 個人使用的 Windows 中文輸入法，fork 自
-[windows-chewing-tsf](https://codeberg.org/chewing/windows-chewing-tsf)，
+[windows-chewing-tsf](https://codeberg.org/chewing/windows-chewing-tsf)
+（Kan-Ru Chen 與新酷音貢獻者），
 引擎是 [libchewing](https://codeberg.org/chewing/libchewing)（新酷音）。
+本 repo 以上游 26.9.0（commit `40a665f`）為起點，上游的完整歷史請見原 repo。
 
 目標：
 
