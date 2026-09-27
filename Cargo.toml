@@ -4,6 +4,7 @@ members = [
   "crates/chewing_tip_core",
   "crates/tsfreg",
   "tip",
+  "vendor/libchewing",
   "xtask"
 ]
 
@@ -24,5 +25,7 @@ lto = "thin"
 panic = "abort"
 
 [patch."crates-io"]
+# Pinyin needs matching libchewing's API can't express (see docs DESIGN.md).
+chewing = { path = "vendor/libchewing" }
 # chewing = { git = "https://codeberg.org/chewing/libchewing.git" }
 # chewing = { path = "../libchewing/" }
