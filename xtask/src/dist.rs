@@ -59,8 +59,20 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             Some(Target::GnuLlvm) => ("x86_64-pc-windows-gnullvm", "i686-pc-windows-gnullvm"),
             None | Some(Target::Msvc) => ("x86_64-pc-windows-msvc", "i686-pc-windows-msvc"),
         };
+        // ARM64 replaces x64 rather than joining it: both load the DLL from
+        // the same 64-bit registry view, and only an ARM64X DLL could serve
+        // both, which the gnullvm toolchain can't link.
+        let (native_target, native_dir, package) = if flags.arm64 {
+            (
+                x64_target.replacen("x86_64", "aarch64", 1),
+                "arm64",
+                format!("{PRODUCT_NAME}-arm64"),
+            )
+        } else {
+            (x64_target.to_owned(), "x64", PRODUCT_NAME.to_owned())
+        };
         let profile = if flags.release { "release" } else { "debug" };
-        let x64_out = PathBuf::from("target").join(x64_target).join(profile);
+        let native_out = PathBuf::from("target").join(&native_target).join(profile);
         let x86_out = PathBuf::from("target").join(x86_target).join(profile);
 
         sh.set_var("RUSTFLAGS", "-Ctarget-feature=+crt-static");
@@ -69,12 +81,12 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
         }
         cmd!(
             sh,
-            "cargo build -p chewing_tip {release...} --target {x64_target}"
+            "cargo build -p chewing_tip {release...} --target {native_target}"
         )
         .run()?;
         cmd!(
             sh,
-            "cargo build -p tsfreg {release...} {nightly...} --target {x64_target}"
+            "cargo build -p tsfreg {release...} {nightly...} --target {native_target}"
         )
         .run()?;
         cmd!(
@@ -83,22 +95,22 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
         )
         .run()?;
 
-        let dir = PathBuf::from("dist").join(PRODUCT_NAME);
+        let dir = PathBuf::from("dist").join(package);
         sh.remove_path(&dir)?;
         sh.copy_file(
-            x64_out.join("chewing_tip.dll"),
-            sh.create_dir(dir.join("x64"))?,
+            native_out.join("chewing_tip.dll"),
+            sh.create_dir(dir.join(native_dir))?,
         )?;
         sh.copy_file(
             x86_out.join("chewing_tip.dll"),
             sh.create_dir(dir.join("x86"))?,
         )?;
-        sh.copy_file(x64_out.join("tsfreg.exe"), &dir)?;
+        sh.copy_file(native_out.join("tsfreg.exe"), &dir)?;
         // The release profile keeps debuginfo for crash analysis; with MSVC it
         // goes to a separate .pdb, but gnullvm embeds it in the binaries.
         if flags.release && matches!(flags.target, Some(Target::GnuLlvm)) {
             let binaries = [
-                dir.join("x64").join("chewing_tip.dll"),
+                dir.join(native_dir).join("chewing_tip.dll"),
                 dir.join("x86").join("chewing_tip.dll"),
                 dir.join("tsfreg.exe"),
             ];

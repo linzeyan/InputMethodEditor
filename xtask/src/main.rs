@@ -34,6 +34,8 @@ mod flags {
                 optional --release
                 /// Build nightly artifact
                 optional --nightly
+                /// Build for ARM64 Windows instead of x64 (x64 apps there can't use it)
+                optional --arm64
             }
         }
     }
@@ -64,6 +66,7 @@ mod flags {
         pub target: Option<Target>,
         pub release: bool,
         pub nightly: bool,
+        pub arm64: bool,
     }
 
     impl Xtask {

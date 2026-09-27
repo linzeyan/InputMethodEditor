@@ -80,11 +80,19 @@ fn register_com_server(view: REG_SAM_FLAGS, dll: &Path) -> windows_registry::Res
     key.set_string("ThreadingModel", "Apartment")
 }
 
+/// On ARM64 Windows, x64 and ARM64 processes read the same 64-bit registry
+/// view, so the ARM64 package registers its native DLL there instead of x64.
+const NATIVE_DIR: &str = if cfg!(target_arch = "aarch64") {
+    "arm64"
+} else {
+    "x64"
+};
+
 fn register(root: &Path) -> Outcome {
-    let x64_dll = root.join("x64").join("chewing_tip.dll");
+    let native_dll = root.join(NATIVE_DIR).join("chewing_tip.dll");
     let x86_dll = root.join("x86").join("chewing_tip.dll");
     let icon = root.join(format!("{PRODUCT_NAME}.ico"));
-    for path in [&x64_dll, &x86_dll, &icon] {
+    for path in [&native_dll, &x86_dll, &icon] {
         if !path.exists() {
             return Err(format!("找不到 {}", path.display()).into());
         }
@@ -107,7 +115,7 @@ fn register(root: &Path) -> Outcome {
     }
 
     // Both views: 32-bit apps load the x86 DLL through the WOW64 registry.
-    register_com_server(KEY_WOW64_64KEY, &x64_dll)?;
+    register_com_server(KEY_WOW64_64KEY, &native_dll)?;
     register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
 
     unsafe {
