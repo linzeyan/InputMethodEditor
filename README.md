@@ -44,12 +44,11 @@ Windows 只從 HKLM 讀取輸入法的 COM 註冊，所以註冊需要一次系�
 改用壓縮檔裡的 `InputMethodEditor.exe`：不用安裝也不用註冊，執行後在背景接收
 鍵盤輸入，把中文打進目前的視窗。
 
-1. 把 `InputMethodEditor.zip`（ARM64 版 Windows 用 `InputMethodEditor-arm64.zip`）
-   解壓到任何位置，例如「文件」資料夾。
+1. 把 `InputMethodEditor.zip` 解壓到任何位置，例如「文件」資料夾。
 2. 在「設定 → 時間與語言 → 語言與地區」，讓鍵盤只剩「美式鍵盤」
    （中文（台灣）底下沒有就新增一個），並移除微軟注音等其他中文輸入法，
    否則它們會和這個程式搶同一個按鍵。
-3. 執行 `x64\InputMethodEditor.exe`（ARM64 版是 `arm64\InputMethodEditor.exe`）。
+3. 執行 `x64\InputMethodEditor.exe`（ARM64 版 Windows 也用它，所有程式都能打）。
    工作列右下角會出現「中」圖示；Windows 11 可能把它收進 ^ 裡，可以在
    「設定 → 個人化 → 工作列 → 其他系統匣圖示」把它打開。
 4. 要登入後自動執行，在「執行」視窗輸入 `shell:startup`，在開啟的資料夾裡
