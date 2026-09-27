@@ -13,7 +13,7 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 
 #[derive(Debug, Clone, Copy)]
-pub(super) struct SystemKeyboardEvent {
+pub(crate) struct SystemKeyboardEvent {
     pub(super) vk: u16,
     pub(super) scan_code: u16,
     pub(super) ascii_code: u8,
@@ -27,7 +27,7 @@ impl Default for SystemKeyboardEvent {
 }
 
 impl SystemKeyboardEvent {
-    pub(super) fn new(vk: u16, lparam: isize) -> SystemKeyboardEvent {
+    pub(crate) fn new(vk: u16, lparam: isize) -> SystemKeyboardEvent {
         let scan_code = {
             let mut scan_code = ((lparam & 0xff0000) >> 16) as u16;
             if scan_code == 0 {

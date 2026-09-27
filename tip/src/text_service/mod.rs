@@ -18,6 +18,7 @@ use windows_core::{
 };
 
 use crate::{
+    engine::key_event::SystemKeyboardEvent,
     quirk::{FpGuard, Quirk},
     text_service::chewing::ReentrantOps,
     w32::imm32::{ImeDpi, patch_ime_info, release_ime_info},
@@ -25,19 +26,16 @@ use crate::{
 
 use self::chewing::ChewingTextService;
 use self::display_attribute::{EnumTfDisplayAttributeInfo, get_display_attribute_info};
-use self::key_event::SystemKeyboardEvent;
 
 mod chewing;
 mod display_attribute;
 mod edit_session;
-mod icons;
-mod key_event;
+pub(crate) mod icons;
 mod lang_bar;
 mod menu;
-mod pinyin;
-mod resources;
-mod theme;
-mod ui_elements;
+pub(crate) mod resources;
+pub(crate) mod theme;
+pub(crate) mod ui_elements;
 
 impl_context_error!(TipError);
 

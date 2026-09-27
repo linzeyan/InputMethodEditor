@@ -62,7 +62,8 @@ const ID_TIMEOUT: usize = 1;
 
 #[implement(ITfUIElement)]
 pub(crate) struct Notification {
-    thread_mgr: ITfThreadMgr,
+    /// None when typing through the keyboard hook, which has no TSF.
+    thread_mgr: Option<ITfThreadMgr>,
     element_id: Cell<u32>,
     parent: HWND,
     inner: Rc<NotificationInner>,
@@ -361,19 +362,26 @@ impl Notification {
         };
         unsafe { RegisterClassExW(&wc) };
     }
-    pub(crate) fn new(parent: HWND, thread_mgr: ITfThreadMgr) -> Result<ComObject<Notification>> {
-        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
+    pub(crate) fn new(
+        parent: HWND,
+        thread_mgr: Option<ITfThreadMgr>,
+    ) -> Result<ComObject<Notification>> {
         let inner = Rc::new(NotificationInner {
             model: RefCell::new(NotificationModel::default()),
             view: RefCell::new(View::Dummy),
         });
         let candidate_list = Notification {
-            thread_mgr,
+            thread_mgr: thread_mgr.clone(),
             element_id: Cell::new(0),
             parent,
             inner,
         }
         .into_object();
+        let Some(thread_mgr) = thread_mgr else {
+            candidate_list.Show(TRUE)?;
+            return Ok(candidate_list);
+        };
+        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         let mut should_show = TRUE;
         let mut ui_element_id = 0;
         let ui_element: ITfUIElement = candidate_list.cast()?;
@@ -385,8 +393,11 @@ impl Notification {
         Ok(candidate_list)
     }
     pub(crate) fn end_ui_element(&self) {
-        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = self.thread_mgr.cast()
-        else {
+        // Without TSF, dropping the notification closes its window.
+        let Some(thread_mgr) = &self.thread_mgr else {
+            return;
+        };
+        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = thread_mgr.cast() else {
             error!("unable to cast thread manager to ITfUIElementMgr");
             return;
         };
@@ -398,7 +409,10 @@ impl Notification {
         self.element_id.set(id);
     }
     fn update_ui_element(&self) -> Result<()> {
-        let ui_manager: ITfUIElementMgr = self.thread_mgr.cast()?;
+        let Some(thread_mgr) = &self.thread_mgr else {
+            return Ok(());
+        };
+        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         unsafe {
             ui_manager.UpdateUIElement(self.element_id.get())?;
         }

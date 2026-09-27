@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Kan-Ru Chen
 
 mod com;
+mod engine;
 mod keybind;
 mod logging;
 mod quirk;

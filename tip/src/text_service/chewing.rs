@@ -2,36 +2,17 @@
 // Copyright (c) 2026 Kan-Ru Chen
 
 use std::cell::{Cell, Ref, RefCell, RefMut};
-use std::ffi::{OsString, c_void};
+use std::ffi::c_void;
 use std::mem;
-use std::os::windows::ffi::OsStringExt;
-use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
-use std::sync::Once;
 use std::sync::atomic::Ordering;
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use chewing::editor::zhuyin_layout::{self, KeyBehavior, KeyboardLayoutCompat, SyllableEditor};
-use chewing::editor::{
-    BasicEditor, CharacterForm, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
-    UserPhraseAddDirection,
-};
-use chewing::input::keycode::Keycode;
-use chewing::input::keymap::{
-    DVORAK_MAP, INVERTED_COLEMAK_DH_ANSI_MAP, INVERTED_COLEMAK_DH_ORTH_MAP, INVERTED_COLEMAK_MAP,
-    INVERTED_DVORAK_MAP, INVERTED_QGMLWY_MAP, INVERTED_WORKMAN_MAP,
-};
-use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE};
-use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
-use chewing::zhuyin::{Bopomofo, Syllable};
-use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
+use chewing::editor::CharacterForm;
 use log::{debug, error, info};
+use scoped_error::expect_error;
 use scoped_error::impl_context_error;
-use scoped_error::{ErrorExt, expect_error};
-use windows::Win32::Foundation::{GetLastError, HINSTANCE, HMODULE, POINT, RECT};
-use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use windows::Win32::Foundation::{GetLastError, HINSTANCE, HWND, POINT, RECT};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
 use windows::Win32::UI::TextServices::{
@@ -45,11 +26,10 @@ use windows::Win32::UI::TextServices::{
     ITfComposition, ITfLangBarItemButton, ITfLangBarItemMgr, ITfThreadMgr,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CheckMenuItem, GetCursorPos, HICON, HMENU, MF_CHECKED, MF_UNCHECKED, TPM_BOTTOMALIGN,
-    TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
+    GetCursorPos, HMENU, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY,
+    TPM_RETURNCMD, TrackPopupMenu,
 };
-use windows_core::{ComObject, ComObjectInner, GUID, HSTRING, Interface};
-use zhconv::{Variant, zhconv};
+use windows_core::{ComObject, ComObjectInner, GUID, Interface};
 
 use super::CommandType;
 use super::GUID_INPUT_DISPLAY_ATTRIBUTE_1;
@@ -57,21 +37,18 @@ use super::GUID_INPUT_DISPLAY_ATTRIBUTE_2;
 use super::display_attribute::register_display_attribute;
 use super::edit_session::InsertText;
 use super::edit_session::{EndComposition, SelectionRect, SetCompositionString};
-use super::key_event::SystemKeyboardEvent;
 use super::lang_bar::LangBarButton;
 use super::menu::Menu;
-use super::pinyin::{self, ContinuousPinyin};
 use super::resources::*;
-use super::theme::{ThemeDetector, WindowsTheme};
-use super::ui_elements::{CandidateList, FilterKeyResult, Model, Notification, NotificationModel};
+use super::theme::ThemeDetector;
+use super::ui_elements::{CandidateList, Notification};
 use crate::com::G_HINSTANCE;
-use crate::keybind::Keybinding;
+use crate::engine::key_event::SystemKeyboardEvent;
+use crate::engine::{Engine, Frontend, TsfLangMode, convert_output};
 use crate::text_service::TextService;
 use crate::text_service::edit_session::request_edit_session;
 use crate::text_service::icons::LangIconSet;
-use crate::text_service::key_event::{KeymapOp, SimulatedKeyboard};
 use crate::text_service::lang_bar::LangBarFactory;
-use crate::ui::gfx::color_s;
 
 const GUID_MODE_BUTTON: GUID = GUID::from_u128(0xD7F58996_ED24_4B6C_AAC6_2499672B9902);
 const GUID_SHAPE_TYPE_BUTTON: GUID = GUID::from_u128(0xD9D1C5FD_F180_4A43_B31B_975F0968AD7B);
@@ -81,71 +58,6 @@ pub(crate) const CLSID_TEXT_SERVICE: GUID = GUID::from_u128(0xE0C45601_7E8F_4FEF
 
 impl_context_error!(TsfError);
 
-const SEL_KEYS: [&str; 6] = [
-    "1234567890",
-    "asdfghjkl;",
-    "asdfzxcv89",
-    "asdfjkl789",
-    "aoeuhtn789",
-    "1234qweras",
-];
-
-#[derive(Debug)]
-enum ShiftKeyState {
-    Down(Instant),
-    Consumed,
-    Up,
-}
-
-impl ShiftKeyState {
-    fn release(&mut self) -> Option<Duration> {
-        let duration = match self {
-            ShiftKeyState::Down(instant) => Some(instant.elapsed()),
-            ShiftKeyState::Consumed | ShiftKeyState::Up => None,
-        };
-        *self = ShiftKeyState::Up;
-        duration
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TsfLangMode {
-    Chinese,
-    English,
-    DisabledChinese,
-    DisabledEnglish,
-}
-
-impl TsfLangMode {
-    fn is_disabled(&self) -> bool {
-        matches!(
-            self,
-            TsfLangMode::DisabledChinese | TsfLangMode::DisabledEnglish
-        )
-    }
-}
-
-impl From<TsfLangMode> for LanguageMode {
-    fn from(value: TsfLangMode) -> Self {
-        match value {
-            TsfLangMode::Chinese => LanguageMode::Chinese,
-            TsfLangMode::English => LanguageMode::English,
-            TsfLangMode::DisabledChinese => LanguageMode::Chinese,
-            TsfLangMode::DisabledEnglish => LanguageMode::English,
-        }
-    }
-}
-
-impl PartialEq<LanguageMode> for TsfLangMode {
-    fn eq(&self, other: &LanguageMode) -> bool {
-        matches!(
-            (self, other),
-            (TsfLangMode::Chinese, LanguageMode::Chinese)
-                | (TsfLangMode::English, LanguageMode::English)
-        )
-    }
-}
-
 pub(super) struct CompositionString {
     pub(super) commit: String,
     pub(super) preedit: String,
@@ -154,6 +66,12 @@ pub(super) struct CompositionString {
 }
 
 pub(super) struct ChewingTextService {
+    engine: Engine,
+    ui: TsfUi,
+}
+
+/// The TSF side: the document's composition and the language bar.
+struct TsfUi {
     thread_mgr: ITfThreadMgr,
     tid: u32,
     input_da_atom: [VARIANT; 2],
@@ -167,26 +85,19 @@ pub(super) struct ChewingTextService {
     switch_shape_button: ComObject<LangBarButton>,
     ime_mode_button: ComObject<LangBarButton>,
 
-    lang_mode: Cell<TsfLangMode>,
     pending_lang_mode_change: Cell<bool>,
 
     has_focus: bool,
-    shift_key_state: ShiftKeyState,
-    cfg: Config,
-    kbtype: KeyboardLayoutCompat,
-    keymap: KeymapOp,
-    keybindings: Vec<Keybinding>,
-    chewing_editor: Editor,
-    notification: Option<ComObject<Notification>>,
-    candidate_list: Option<ComObject<CandidateList>>,
-    /// For each slot in the candidate list, the editor's index on the current
-    /// page. They differ once converted duplicates are hidden.
-    candidate_indices: Vec<usize>,
-    /// What the character had before the last key, a Space, made it tone 1.
-    /// A second Space puts it back and types a space.
-    space_undo: Option<Syllable>,
     composition: Rc<RefCell<Option<ITfComposition>>>,
     pending_edit: Weak<RefCell<Option<CompositionString>>>,
+}
+
+/// What the engine types into: [`TsfUi`] and the document of the key being
+/// handled.
+struct Tsf<'a> {
+    ui: &'a mut TsfUi,
+    /// None outside key events; the focused document then.
+    context: Option<ITfContext>,
 }
 
 impl ChewingTextService {
@@ -273,15 +184,7 @@ impl ChewingTextService {
             ime_mode_button.cast()?,
         ];
 
-        let cfg = Config::from_reg().unwrap_or_else(|error| {
-            error!("unable to load config: {error}");
-            Config::default()
-        });
-
-        // Initialize a temp editor, this will be replaced in init_chewing_context.
-        let editor = new_editor()?;
-
-        let mut cts = ChewingTextService {
+        let mut ui = TsfUi {
             thread_mgr,
             tid,
             composition_sink: ts.cast()?,
@@ -289,41 +192,31 @@ impl ChewingTextService {
             _menu: menu,
             popup_menu,
             lang_icons: LangIconSet::load(),
-            lang_mode: Cell::new(TsfLangMode::English),
             has_focus: true,
-            shift_key_state: ShiftKeyState::Up,
-            cfg,
-            kbtype: KeyboardLayoutCompat::Default,
-            keymap: KeymapOp::None,
-            keybindings: vec![],
-            chewing_editor: editor,
             lang_bar_buttons,
             switch_lang_button,
             switch_shape_button,
             ime_mode_button,
-            notification: Default::default(),
-            candidate_list: Default::default(),
-            candidate_indices: vec![],
-            space_undo: None,
             composition: Default::default(),
             pending_edit: Weak::new(),
             pending_lang_mode_change: Cell::new(false),
         };
 
-        if let Err(error) = cts.init_openclose(tid) {
+        if let Err(error) = ui.init_openclose(tid) {
             error!("unable to initialize openclose: {error:#}");
         }
 
-        if let Err(error) = cts.init_chewing_context() {
-            error!("unable to initialize chewing: {error:#}");
-        }
+        let engine = Engine::new(&mut Tsf {
+            ui: &mut ui,
+            context: None,
+        })?;
 
-        Ok(cts)
+        Ok(ChewingTextService { engine, ui })
     }
 
     pub(super) fn deactivate(mut self) -> ITfThreadMgr {
-        if let Ok(lang_bar_item_mgr) = self.thread_mgr.cast::<ITfLangBarItemMgr>() {
-            for button in self.lang_bar_buttons.drain(0..) {
+        if let Ok(lang_bar_item_mgr) = self.ui.thread_mgr.cast::<ITfLangBarItemMgr>() {
+            for button in self.ui.lang_bar_buttons.drain(0..) {
                 if let Err(error) = unsafe { lang_bar_item_mgr.RemoveItem(&button) } {
                     error!("unable to remove lang bar item: {error}");
                 }
@@ -332,33 +225,242 @@ impl ChewingTextService {
         // TSF doc: The corresponding ITfTextInputProcessor::Deactivate
         // method that shuts down the text service must release all references
         // to the ptim parameter.
-        self.thread_mgr
+        self.ui.thread_mgr
     }
 
     pub(super) fn on_kill_focus(&mut self, context: Option<ITfContext>) -> Result<()> {
         debug!("on_kill_focus");
-        self.has_focus = false;
-        if self.is_composing()
+        self.ui.has_focus = false;
+        if self.engine.is_composing(self.ui.has_composition())
             && let Some(context) = context
         {
-            self.end_composition(&context)?;
+            self.ui.end_composition(&context)?;
         }
-        self.hide_candidates();
-        self.hide_message();
+        self.engine.hide_candidates();
+        self.engine.hide_message();
         Ok(())
     }
 
     pub(super) fn on_focus(&mut self) -> Result<()> {
         debug!("on_focus");
-        self.has_focus = true;
+        self.ui.has_focus = true;
         Ok(())
     }
 
     pub(super) fn on_thread_focus(&mut self) -> Result<()> {
-        let _ = self.cfg.reload_if_needed();
-        self.apply_runtime_config()?;
+        let _ = self.engine.cfg.reload_if_needed();
+        let ui = Tsf {
+            ui: &mut self.ui,
+            context: None,
+        };
+        self.engine.apply_runtime_config(&ui)?;
         self.sync_lang_mode(true)?;
         Ok(())
+    }
+
+    pub(super) fn on_test_keydown(
+        &mut self,
+        context: &ITfContext,
+        ev: SystemKeyboardEvent,
+    ) -> Result<bool> {
+        let mut ui = Tsf {
+            ui: &mut self.ui,
+            context: Some(context.clone()),
+        };
+        self.engine.on_test_keydown(&mut ui, ev)
+    }
+
+    pub(super) fn on_keydown(
+        &mut self,
+        context: &ITfContext,
+        ev: SystemKeyboardEvent,
+    ) -> Result<bool> {
+        let mut ui = Tsf {
+            ui: &mut self.ui,
+            context: Some(context.clone()),
+        };
+        self.engine.on_keydown(&mut ui, ev)
+    }
+
+    pub(super) fn on_test_keyup(
+        &mut self,
+        context: &ITfContext,
+        ev: SystemKeyboardEvent,
+    ) -> Result<bool> {
+        let mut ui = Tsf {
+            ui: &mut self.ui,
+            context: Some(context.clone()),
+        };
+        self.engine.on_test_keyup(&mut ui, ev)
+    }
+
+    pub(super) fn on_keyup(
+        &mut self,
+        context: &ITfContext,
+        ev: SystemKeyboardEvent,
+    ) -> Result<bool> {
+        let mut ui = Tsf {
+            ui: &mut self.ui,
+            context: Some(context.clone()),
+        };
+        self.engine.on_keyup(&mut ui, ev)
+    }
+
+    pub(super) fn on_composition_terminated(
+        &mut self,
+        ecwrite: u32,
+        composition: &ITfComposition,
+    ) -> Result<()> {
+        unsafe {
+            let composition_range = composition
+                .GetRange()
+                .inspect_err(|_| debug!("failed to get composition range"))?;
+            let doc_mgr = self
+                .ui
+                .thread_mgr
+                .GetFocus()
+                .context("failed to get current ITfDocumentMgr")?;
+            let context = doc_mgr
+                .GetTop()
+                .context("failed to get current ITfContext")?;
+
+            // When a composition is interrupted by the application we only need to
+            // clear the display attributes. When I tested this, clearing the display attribute
+            // is not necessary, but this is what mozc was doing.
+            //
+            // In pure TSF mode, the composition string is automatically committed on termination.
+            // In TSF/IMM32 bridge mode, the bridge sets a default property which we override to
+            // have the same commit on unselect behavior. See [`TextService_Impl::Activate`].
+            let disp_attr_prop =
+                context.GetProperty(&windows::Win32::UI::TextServices::GUID_PROP_ATTRIBUTE)?;
+            disp_attr_prop
+                .Clear(ecwrite, &composition_range)
+                .inspect_err(|_| debug!("failed to clear display attribute"))?;
+        }
+        self.on_composition_terminated_tail()
+    }
+
+    // SAFETY: this method must not cause TSF callback reentrant
+    pub(super) fn on_composition_terminated_tail(&mut self) -> Result<()> {
+        debug!(has_focus=self.ui.has_focus; "on_composition_terminated_tail");
+        self.engine.on_composition_terminated();
+        if let Some(cell) = self.ui.pending_edit.upgrade() {
+            debug!("Clear pending edits to avoid double commits");
+            cell.replace(None);
+        }
+        self.ui.pending_edit = Weak::new();
+        self.ui.composition.replace(None);
+        Ok(())
+    }
+
+    pub(super) fn on_compartment_change_ro(&self, guid: &GUID) -> Result<()> {
+        debug!(has_focus=self.ui.has_focus; "on_compartment_change_ro");
+        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
+            && !self.ui.pending_lang_mode_change.take()
+            && self.ui.has_focus
+        {
+            // Compartment change is caused by Ctrl+Space shortcut, starting
+            // a sync_lang_mode cycle.
+            self.engine.toggle_keyboard_openclose();
+            self.sync_lang_mode(false)?;
+        }
+        Ok(())
+    }
+
+    pub(super) fn on_compartment_change(&mut self, guid: &GUID) -> Result<()> {
+        debug!(has_focus=self.ui.has_focus; "on_compartment_change");
+        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
+            && !self.ui.pending_lang_mode_change.take()
+            && self.ui.has_focus
+        {
+            // Compartment change is caused by Ctrl+Space shortcut, starting
+            // a sync_lang_mode cycle.
+            self.engine.toggle_keyboard_openclose();
+            self.sync_lang_mode(false)?;
+            if self.engine.is_composing(self.ui.has_composition())
+                && self.engine.lang_mode.get().is_disabled()
+            {
+                let editor = &mut self.engine.chewing_editor;
+                editor.commit()?;
+                // Not via process_keyevent, so not written yet.
+                editor.flush();
+                let commit = editor.display_commit().to_owned();
+                editor.ack();
+                debug!(commit; "commit string");
+                let commit = convert_output(&self.engine.cfg.chewing_tsf, &commit);
+                unsafe {
+                    let doc_mgr = self
+                        .ui
+                        .thread_mgr
+                        .GetFocus()
+                        .context("failed to get current ITfDocumentMgr")?;
+                    let context = doc_mgr
+                        .GetTop()
+                        .context("failed to get current ITfContext")?;
+                    self.ui
+                        .set_composition_string(&context, commit, String::new(), vec![], 0)?;
+                    self.ui.end_composition(&context)?;
+                }
+                debug!("commit string ok");
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn on_command(&mut self, id: u32, cmd_type: CommandType) {
+        if matches!(cmd_type, CommandType::RightClick) {
+            if id == ID_MODE_ICON {
+                let mut pos = POINT::default();
+                let ret = unsafe {
+                    let _ = GetCursorPos(&mut pos);
+                    TrackPopupMenu(
+                        self.ui.popup_menu,
+                        TPM_NONOTIFY
+                            | TPM_RETURNCMD
+                            | TPM_LEFTALIGN
+                            | TPM_BOTTOMALIGN
+                            | TPM_LEFTBUTTON,
+                        pos.x,
+                        pos.y,
+                        None,
+                        GetFocus(),
+                        None,
+                    )
+                };
+                if ret.as_bool() {
+                    self.on_command(ret.0 as u32, CommandType::Menu);
+                } else {
+                    let last_error = unsafe { GetLastError() };
+                    let hresult = last_error.to_hresult();
+                    error!("unable to open popup menu: {}", hresult.message());
+                }
+            }
+        } else {
+            let mut ui = Tsf {
+                ui: &mut self.ui,
+                context: None,
+            };
+            self.engine.on_command(&mut ui, id);
+        }
+    }
+
+    /// Follows a change of the language mode; `internal` if we made it, so
+    /// the compartment change it causes is not taken for the user's.
+    fn sync_lang_mode(&self, internal: bool) -> Result<()> {
+        debug!("set pending_lang_mode_change to {internal}");
+        self.ui.pending_lang_mode_change.set(internal);
+        self.engine.sync_caps_lock();
+        self.ui.update_lang_buttons(&self.engine)
+    }
+
+    pub(crate) fn should_sync_keyboard_openclose(&self) -> bool {
+        self.engine.cfg.chewing_tsf.sync_lang_mode_openclose
+    }
+}
+
+impl TsfUi {
+    fn has_composition(&self) -> bool {
+        self.composition.borrow().is_some()
     }
 
     fn is_context_mutable(&self, context: &ITfContext) -> Result<bool, TsfError> {
@@ -390,736 +492,9 @@ impl ChewingTextService {
         })
     }
 
-    pub(super) fn on_test_keydown(
-        &mut self,
-        context: &ITfContext,
-        ev: SystemKeyboardEvent,
-    ) -> Result<bool> {
-        // NB: self.lang_mode might have changed earlier
-        self.chewing_editor
-            .set_editor_options(|opt| opt.language_mode = self.lang_mode.get().into());
-
-        let is_context_mutable = self.is_context_mutable(context)?;
-        let evt = ev.to_keyboard_event(self.keymap);
-        let simulate_english_layout = self.cfg.chewing_tsf.simulate_english_layout != 0;
-        // Determine shift key state here, this might be our last chance seeing this key.
-        if evt.ksym != SYM_LEFTSHIFT
-            && evt.ksym != SYM_RIGHTSHIFT
-            && evt.is_state_on(KeyState::Shift)
-        {
-            self.shift_key_state = ShiftKeyState::Consumed;
-        }
-        debug!(evt:?, shift_key_state:? = self.shift_key_state; "on_test_keydown");
-
-        let mut shift_down = false;
-        if (evt.ksym == SYM_LEFTSHIFT || evt.ksym == SYM_RIGHTSHIFT)
-            && self.cfg.chewing_tsf.switch_lang_with_shift
-            && matches!(self.shift_key_state, ShiftKeyState::Up)
-        {
-            debug!("shift_key_state = Down");
-            self.shift_key_state = ShiftKeyState::Down(Instant::now());
-            shift_down = true;
-            // return Ok(false);
-        }
-        // Ok(handled?.parameters.as_bool().unwrap_or_default())
-        //
-        // Step 1. apply any config changes
-        //
-        if let Err(error) = self.apply_config_if_changed() {
-            error!("unable to load config: {error:#}");
-        }
-        //
-        // Step 2. handle any mode change related keydown
-        //
-        // Ignore all keys if keyboard is closed
-        if self.lang_mode.get().is_disabled() {
-            return Ok(false);
-        }
-        //
-        // Step 2.1 handle switch lang with Shift
-        //
-        if shift_down {
-            return Ok(false);
-        }
-        //
-        // Step 2.2 handle any keybindings
-        //
-        if self.keybindings.iter().any(|kb| kb.matches(&evt)) {
-            return Ok(true);
-        }
-        //
-        // Step 2.3 ignore CapsLock if disabled
-        if evt.ksym == SYM_CAPSLOCK && !self.cfg.chewing_tsf.enable_caps_lock {
-            return Ok(false);
-        }
-        //
-        // Step 3. ignore key events if the document is readonly or inactive
-        //
-        if !is_context_mutable {
-            return Ok(false);
-        }
-        //
-        // Step 4. ignore key events if they might be shortcut keys
-        //
-        if evt.is_state_on(KeyState::Alt) {
-            // bypass IME. This might be a shortcut key used in the application
-            debug!("key not handled - Alt modifier key was down");
-            return Ok(false);
-        }
-        if evt.is_state_on(KeyState::Control) {
-            // bypass IME. This might be a shortcut key used in the application
-            if self.is_composing() && evt.ksym.is_digit() {
-                // need to handle userphrase
-                return Ok(true);
-            } else if evt.is_state_on(KeyState::Shift)
-                && self.cfg.chewing_tsf.easy_symbols_with_shift_ctrl
-            {
-                // need to handle easy symbol input
-                return Ok(true);
-            } else {
-                debug!("key not handled - Ctrl modifier key was down");
-                return Ok(false);
-            }
-        }
-        if self.cfg.chewing_tsf.enable_caps_lock
-            && !self.cfg.chewing_tsf.lock_chinese_on_caps_lock
-            && evt.ksym.is_unicode()
-        {
-            // need to handle case conversion
-            return Ok(true);
-        }
-        if !self.is_composing() {
-            let shape_mode = self.chewing_editor.editor_options().character_form;
-            // don't do further handling in pure English + half shape mode
-            if self.lang_mode.get() == LanguageMode::English
-                && shape_mode == CharacterForm::Halfwidth
-                && !simulate_english_layout
-            {
-                if evt.ksym == SYM_SPACE
-                    && evt.is_state_on(KeyState::Shift)
-                    && self.cfg.chewing_tsf.enable_fullwidth_toggle_key
-                {
-                    // need to handle fullwidth mode switch
-                    return Ok(true);
-                } else {
-                    debug!("key not handled - in English mode");
-                    return Ok(false);
-                }
-            }
-            // No need to handle VK_SPACE when not composing and not fullshape mode
-            // This make the space key available for other shortcuts
-            if evt.ksym == SYM_SPACE
-                && shape_mode != CharacterForm::Fullwidth
-                && !evt.is_state_on(KeyState::Shift)
-            {
-                return Ok(false);
-            }
-            if !evt.ksym.is_unicode() {
-                debug!("key not handled - key is not printable");
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    pub(super) fn on_keydown(
-        &mut self,
-        context: &ITfContext,
-        ev: SystemKeyboardEvent,
-    ) -> Result<bool> {
-        // Only the very next key may undo a tone-1 Space.
-        let space_undo = self.space_undo.take();
-        if !self.on_test_keydown(context, ev)? {
-            return Ok(false);
-        }
-        let mut evt = ev.to_keyboard_event(self.keymap);
-        debug!(evt:?; "on_keydown");
-
-        // Handle keybindings
-        // FIXME: refactor this
-        let mut text_action = None;
-        if let Some(keybinding) = self.keybindings.iter().find(|kb| kb.matches(&evt)) {
-            debug!("matched keybinding on action={}", keybinding.action);
-            let mut handled = true;
-            match keybinding.action.as_str() {
-                "toggle_simplified_chinese" => {
-                    self.toggle_simp_chinese()?;
-                    // Re-render now so the text being composed switches script
-                    // without waiting for the next key.
-                    if self.is_composing() {
-                        self.update_candidates(context)?;
-                        self.update_preedit(context, String::new())?;
-                    }
-                    if self.cfg.chewing_tsf.show_notification {
-                        let msg = if self.cfg.chewing_tsf.output_simp_chinese {
-                            "簡體中文"
-                        } else {
-                            "正體中文"
-                        };
-                        self.show_message(context, &msg.into(), Duration::from_millis(500))?;
-                    }
-                }
-                "toggle_hsu_keyboard" => {
-                    self.toggle_hsu_keyboard(context)?;
-                }
-                "toggle_pinyin" => {
-                    if self.cfg.chewing_tsf.pinyin && self.chewing_editor.entering_syllable() {
-                        self.chewing_editor.process_keyevent(pinyin::end_syllable());
-                    }
-                    // What is being typed goes out first: toneless pinyin
-                    // syllables would convert differently under zhuyin's engine.
-                    if !self.chewing_editor.is_empty() {
-                        self.chewing_editor.commit()?;
-                        self.chewing_editor.flush();
-                        // Like the text action with nothing to add: the commit
-                        // goes out below and the key goes no further.
-                        text_action = Some(String::new());
-                        handled = false;
-                    }
-                    self.toggle_pinyin(context)?;
-                }
-                "text" => {
-                    if !self.chewing_editor.is_empty() {
-                        self.chewing_editor.commit()?;
-                        // Only process_keyevent writes what chewing learned to
-                        // disk; the next focus change reloads the editor from
-                        // there, so anything unwritten is lost.
-                        self.chewing_editor.flush();
-                    }
-                    text_action = Some(keybinding.param.clone());
-                    handled = false;
-                }
-                act => {
-                    if act.starts_with("selecting_") {
-                        handled = false;
-                    } else {
-                        error!("Unsupported keybinding action: {act}");
-                    }
-                }
-            }
-            if handled {
-                return Ok(true);
-            }
-        }
-
-        if self.cfg.chewing_tsf.pinyin
-            && self.chewing_editor.entering_syllable()
-            && !pinyin::takes(&evt)
-        {
-            self.chewing_editor.process_keyevent(pinyin::end_syllable());
-        }
-
-        if text_action.is_some() {
-            // do nothing, handled later
-        } else if evt.ksym.is_unicode() {
-            let mut momentary_english_mode = false;
-            let mut upper_case = false;
-            if evt.is_state_on(KeyState::Shift) {
-                upper_case = true;
-            }
-            // If shift is pressed, but we don't want to enter full shape symbols, or easy_symbol_input is not enabled
-            if evt.is_state_on(KeyState::Shift)
-                && matches!(self.lang_mode.get(), TsfLangMode::Chinese)
-                && (!self.cfg.chewing_tsf.full_shape_symbols || evt.ksym.is_atoz())
-                && !self.cfg.chewing_tsf.easy_symbols_with_shift
-                && !(evt.is_state_on(KeyState::Control)
-                    && self.cfg.chewing_tsf.easy_symbols_with_shift_ctrl)
-            {
-                momentary_english_mode = true;
-                if !self.cfg.chewing_tsf.upper_case_with_shift {
-                    upper_case = false;
-                }
-            }
-            evt.ksym = if evt.ksym.is_ascii() {
-                let code = evt.ksym.to_unicode();
-                if upper_case {
-                    Keysym::from(code.to_ascii_uppercase())
-                } else {
-                    Keysym::from(code.to_ascii_lowercase())
-                }
-            } else {
-                evt.ksym
-            };
-            // HACK: convert sel_keys key to number key
-            if self.chewing_editor.is_selecting() {
-                let Some(mapped) = self.map_sel_key(evt) else {
-                    // Nothing is shown in that slot; chewing would pick the
-                    // hidden duplicate there.
-                    return Ok(true);
-                };
-                evt = mapped;
-            }
-            if evt.ksym == SYM_SPACE && evt.is_state_on(KeyState::Shift) {
-                // TODO: maybe this can be merged back to the default branch?
-                self.chewing_editor.process_keyevent(evt);
-            } else if self.lang_mode.get() == LanguageMode::English || momentary_english_mode {
-                let old_lang_mode = self.chewing_editor.editor_options().language_mode;
-                self.chewing_editor
-                    .set_editor_options(|opt| opt.language_mode = LanguageMode::English);
-                self.chewing_editor.process_keyevent(evt);
-                self.chewing_editor
-                    .set_editor_options(|opt| opt.language_mode = old_lang_mode);
-            } else if let Some(old) = space_undo.filter(|_| evt.ksym == SYM_SPACE) {
-                // Two Spaces type a space and leave the character as it was.
-                retone(&mut self.chewing_editor, self.kbtype, old.tone());
-                self.chewing_editor.process_keyevent(evt);
-            } else if !self.cfg.chewing_tsf.pinyin
-                && let Some(old) = change_tone(&mut self.chewing_editor, self.kbtype, evt)
-            {
-                if evt.ksym == SYM_SPACE {
-                    self.space_undo = Some(old);
-                }
-            } else {
-                self.chewing_editor.process_keyevent(evt);
-            }
-        } else {
-            let mut key_handled = false;
-            if self.cfg.chewing_tsf.cursor_cand_list
-                && let Some(candidate_list) = &self.candidate_list
-            {
-                match candidate_list.filter_key_event(evt.ksym) {
-                    FilterKeyResult::HandledCommit => {
-                        if let Some(&index) =
-                            self.candidate_indices.get(candidate_list.current_sel())
-                        {
-                            self.chewing_editor.select(index)?;
-                        }
-                        key_handled = true;
-                    }
-                    FilterKeyResult::Handled => {
-                        candidate_list.show();
-                        return Ok(true);
-                    }
-                    FilterKeyResult::NotHandled => {
-                        // do nothing
-                    }
-                }
-                if let Some(keybinding) = self.keybindings.iter().find(|kb| kb.matches(&evt)) {
-                    debug!("matched keybinding on action={}", keybinding.action);
-                    match keybinding.action.as_str() {
-                        "selecting_unlearn_phrase" => {
-                            if self.chewing_editor.is_selecting() {
-                                // The list may show converted text; unlearning
-                                // needs the phrase as the dictionary stores it.
-                                if self.cfg.chewing_tsf.cursor_cand_list
-                                    && let Some(candidate_list) = &self.candidate_list
-                                    && let Some(&index) =
-                                        self.candidate_indices.get(candidate_list.current_sel())
-                                    && let Some(phrase) = self
-                                        .chewing_editor
-                                        .paginated_candidates()?
-                                        .get(index)
-                                        .cloned()
-                                {
-                                    let phrase_len = phrase.chars().count();
-                                    // TODO: expose begin and end from selector
-                                    let cursor = if self.cfg.chewing_tsf.phrase_choice_rearward {
-                                        self.chewing_editor.cursor().saturating_sub(phrase_len - 1)
-                                    } else {
-                                        self.chewing_editor.cursor()
-                                    };
-                                    let syllables: Vec<Syllable> = self
-                                        .chewing_editor
-                                        .symbols()
-                                        .iter()
-                                        .skip(cursor)
-                                        .take(phrase_len)
-                                        .map_while(|s| s.to_syllable())
-                                        .collect();
-                                    if syllables.len() == phrase_len {
-                                        if let Err(error) =
-                                            self.chewing_editor.unlearn_phrase(&syllables, &phrase)
-                                        {
-                                            error!("failed to unlearn phrase: {error}");
-                                        }
-                                        // Not via process_keyevent, so not written yet.
-                                        self.chewing_editor.flush();
-                                        self.update_candidates(context)?;
-                                        // TODO: move this to editor
-                                        let shown = convert_output(&self.cfg.chewing_tsf, &phrase);
-                                        self.show_message(
-                                            context,
-                                            &format!("刪除：{shown}").into(),
-                                            Duration::from_millis(500),
-                                        )?;
-                                        key_handled = true;
-                                    }
-                                }
-                            }
-                        }
-                        act => {
-                            error!("Unsupported keybinding action: {act}");
-                        }
-                    }
-                }
-            }
-
-            if !key_handled {
-                self.chewing_editor.process_keyevent(evt);
-            }
-        }
-
-        let last_behavior = self.chewing_editor.last_key_behavior();
-
-        if last_behavior == EditorKeyBehavior::Ignore {
-            debug!("early return - chewing ignored key");
-            return Ok(false);
-        }
-
-        // Not composing so we can commit the text immediately
-        if !self.is_composing()
-            && (last_behavior == EditorKeyBehavior::Commit || text_action.is_some())
-        {
-            let text = self.chewing_editor.display_commit().to_owned();
-            self.chewing_editor.ack();
-            debug!(text; "commit string");
-            self.insert_text(context, &text)?;
-            if let Some(param) = text_action {
-                self.insert_text(context, &param)?;
-            }
-            debug!("commit string ok");
-            return Ok(true);
-        }
-
-        if let Err(error) = self.update_candidates(context) {
-            error!("{}", error.report());
-        }
-
-        debug!("updated candidates");
-
-        let commit = if last_behavior == EditorKeyBehavior::Commit {
-            let mut commit = self.chewing_editor.display_commit().to_owned();
-            self.chewing_editor.ack();
-            if let Some(param) = text_action {
-                commit.push_str(&param);
-            }
-            commit
-        } else {
-            String::new()
-        };
-
-        self.update_preedit(context, commit)?;
-
-        if !self.chewing_editor.notification().is_empty() {
-            let msg = HSTRING::from(self.chewing_editor.notification());
-            self.show_message(context, &msg, Duration::from_millis(500))?;
-        }
-
-        Ok(true)
-    }
-
-    pub(super) fn on_test_keyup(
-        &mut self,
-        context: &ITfContext,
-        ev: SystemKeyboardEvent,
-    ) -> Result<bool> {
-        if self.lang_mode.get().is_disabled() {
-            return Ok(false);
-        }
-        self.on_keyup(context, ev)
-    }
-
-    pub(super) fn on_keyup(
-        &mut self,
-        context: &ITfContext,
-        ev: SystemKeyboardEvent,
-    ) -> Result<bool> {
-        let evt = ev.to_keyboard_event(self.keymap);
-        let last_is_shift = evt.ksym == SYM_LEFTSHIFT || evt.ksym == SYM_RIGHTSHIFT;
-        let last_is_capslock = evt.ksym == SYM_CAPSLOCK;
-
-        debug!(last_is_shift, last_is_capslock; "");
-
-        if last_is_shift
-            && self.shift_key_state.release().is_some_and(|duration| {
-                duration < Duration::from_millis(self.cfg.chewing_tsf.shift_key_sensitivity as u64)
-            })
-            && self.cfg.chewing_tsf.switch_lang_with_shift
-        {
-            // TODO: simplify this
-            if self.cfg.chewing_tsf.enable_caps_lock {
-                // Locked by CapsLock
-                let msg = match self.lang_mode.get() {
-                    TsfLangMode::English => HSTRING::from("CapsLock 鎖定英數模式"),
-                    TsfLangMode::Chinese => HSTRING::from("CapsLock 鎖定中文模式"),
-                    _ => HSTRING::from("輸入法關閉中"), // unreachable
-                };
-                if self.cfg.chewing_tsf.show_notification {
-                    self.show_message(context, &msg, Duration::from_millis(500))?;
-                }
-            } else {
-                self.toggle_lang_mode()?;
-                let msg = match self.lang_mode.get() {
-                    TsfLangMode::English => HSTRING::from("英數模式"),
-                    TsfLangMode::Chinese => HSTRING::from("中文模式"),
-                    _ => HSTRING::from("輸入法關閉中"), // unreachable
-                };
-                if self.cfg.chewing_tsf.show_notification {
-                    self.show_message(context, &msg, Duration::from_millis(500))?;
-                }
-            }
-        }
-
-        if self.cfg.chewing_tsf.enable_caps_lock && last_is_capslock {
-            self.sync_lang_mode(true)?;
-            let msg = match self.lang_mode.get() {
-                TsfLangMode::English => HSTRING::from("英數模式"),
-                TsfLangMode::Chinese => HSTRING::from("中文模式"),
-                _ => HSTRING::from("輸入法關閉中"), // unreachable
-            };
-            if self.cfg.chewing_tsf.show_notification {
-                self.show_message(context, &msg, Duration::from_millis(500))?;
-            }
-        }
-
-        // It is usually harmless to bubble up the keyup event but can be problematic if
-        // keyup of a corresponding keydown doesn't match. Shortcut might be stuck, and
-        // key repeat might not stop. So we always return `false` and handle keyup in
-        // `on_test_keyup`.
-        Ok(false)
-    }
-
-    fn toggle_keyboard_openclose(&self) {
-        self.lang_mode.update(|mode| match mode {
-            TsfLangMode::Chinese => TsfLangMode::DisabledChinese,
-            TsfLangMode::English => TsfLangMode::DisabledEnglish,
-            TsfLangMode::DisabledChinese => TsfLangMode::Chinese,
-            TsfLangMode::DisabledEnglish => TsfLangMode::English,
-        });
-    }
-
-    pub(super) fn on_composition_terminated(
-        &mut self,
-        ecwrite: u32,
-        composition: &ITfComposition,
-    ) -> Result<()> {
-        unsafe {
-            let composition_range = composition
-                .GetRange()
-                .inspect_err(|_| debug!("failed to get composition range"))?;
-            let doc_mgr = self
-                .thread_mgr
-                .GetFocus()
-                .context("failed to get current ITfDocumentMgr")?;
-            let context = doc_mgr
-                .GetTop()
-                .context("failed to get current ITfContext")?;
-
-            // When a composition is interrupted by the application we only need to
-            // clear the display attributes. When I tested this, clearing the display attribute
-            // is not necessary, but this is what mozc was doing.
-            //
-            // In pure TSF mode, the composition string is automatically committed on termination.
-            // In TSF/IMM32 bridge mode, the bridge sets a default property which we override to
-            // have the same commit on unselect behavior. See [`TextService_Impl::Activate`].
-            let disp_attr_prop =
-                context.GetProperty(&windows::Win32::UI::TextServices::GUID_PROP_ATTRIBUTE)?;
-            disp_attr_prop
-                .Clear(ecwrite, &composition_range)
-                .inspect_err(|_| debug!("failed to clear display attribute"))?;
-        }
-        self.on_composition_terminated_tail()
-    }
-
-    // SAFETY: this method must not cause TSF callback reentrant
-    pub(super) fn on_composition_terminated_tail(&mut self) -> Result<()> {
-        debug!(has_focus=self.has_focus; "on_composition_terminated_tail");
-        if self.candidate_list.is_some() {
-            self.hide_candidates();
-        }
-        let editor = &mut self.chewing_editor;
-        if editor.is_selecting() {
-            let _ = editor.cancel_selecting();
-        }
-        editor.clear_syllable_editor();
-        editor.clear_composition_editor();
-        if let Some(cell) = self.pending_edit.upgrade() {
-            debug!("Clear pending edits to avoid double commits");
-            cell.replace(None);
-        }
-        self.pending_edit = Weak::new();
-        self.composition.replace(None);
-        Ok(())
-    }
-
-    pub(super) fn on_compartment_change_ro(&self, guid: &GUID) -> Result<()> {
-        debug!(has_focus=self.has_focus; "on_compartment_change_ro");
-        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
-            && !self.pending_lang_mode_change.take()
-            && self.has_focus
-        {
-            // Compartment change is caused by Ctrl+Space shortcut, starting
-            // a sync_lang_mode cycle.
-            self.toggle_keyboard_openclose();
-            self.sync_lang_mode(false)?;
-        }
-        Ok(())
-    }
-
-    pub(super) fn on_compartment_change(&mut self, guid: &GUID) -> Result<()> {
-        debug!(has_focus=self.has_focus; "on_compartment_change");
-        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
-            && !self.pending_lang_mode_change.take()
-            && self.has_focus
-        {
-            // Compartment change is caused by Ctrl+Space shortcut, starting
-            // a sync_lang_mode cycle.
-            self.toggle_keyboard_openclose();
-            self.sync_lang_mode(false)?;
-            if self.is_composing() && self.lang_mode.get().is_disabled() {
-                self.chewing_editor.commit()?;
-                // Not via process_keyevent, so not written yet.
-                self.chewing_editor.flush();
-                let commit = self.chewing_editor.display_commit().to_owned();
-                self.chewing_editor.ack();
-                debug!(commit; "commit string");
-                unsafe {
-                    let doc_mgr = self
-                        .thread_mgr
-                        .GetFocus()
-                        .context("failed to get current ITfDocumentMgr")?;
-                    let context = doc_mgr
-                        .GetTop()
-                        .context("failed to get current ITfContext")?;
-                    self.set_composition_string(&context, &commit, "", vec![], 0)?;
-                    self.end_composition(&context)?;
-                }
-                debug!("commit string ok");
-            }
-        }
-        Ok(())
-    }
-
-    pub(super) fn on_command(&mut self, id: u32, cmd_type: CommandType) {
-        if matches!(cmd_type, CommandType::RightClick) {
-            if id == ID_MODE_ICON {
-                let mut pos = POINT::default();
-                let ret = unsafe {
-                    let _ = GetCursorPos(&mut pos);
-                    TrackPopupMenu(
-                        self.popup_menu,
-                        TPM_NONOTIFY
-                            | TPM_RETURNCMD
-                            | TPM_LEFTALIGN
-                            | TPM_BOTTOMALIGN
-                            | TPM_LEFTBUTTON,
-                        pos.x,
-                        pos.y,
-                        None,
-                        GetFocus(),
-                        None,
-                    )
-                };
-                if ret.as_bool() {
-                    self.on_command(ret.0 as u32, CommandType::Menu);
-                } else {
-                    let last_error = unsafe { GetLastError() };
-                    let hresult = last_error.to_hresult();
-                    error!("unable to open popup menu: {}", hresult.message());
-                }
-            }
-        } else {
-            match id {
-                ID_SWITCH_LANG => {
-                    if let Err(error) = self.toggle_lang_mode() {
-                        error!("unable to toggle lang mode: {error}");
-                    }
-                }
-                ID_SWITCH_SHAPE => {
-                    if let Err(error) = self.toggle_shape_mode() {
-                        error!("unable to toggle shape mode: {error}");
-                    }
-                }
-                ID_MODE_ICON => {
-                    if let Err(error) = self.toggle_lang_mode() {
-                        error!("unable to toggle lang mode: {error}");
-                    }
-                }
-                ID_OUTPUT_SIMP_CHINESE => {
-                    if let Err(error) = self.toggle_simp_chinese() {
-                        error!("unable to toggle simplified chinese: {error}");
-                    }
-                }
-                ID_OUTPUT_SIMP_VOCABULARY => {
-                    if let Err(error) = self.toggle_simp_vocabulary() {
-                        error!("unable to toggle simplified vocabulary: {error}");
-                    }
-                }
-                ID_MOEDICT => open_url("https://www.moedict.tw/"),
-                ID_DICT => open_url("https://dict.revised.moe.edu.tw/"),
-                ID_SIMPDICT => open_url("https://dict.concised.moe.edu.tw/"),
-                ID_LITTLEDICT => open_url("https://dict.mini.moe.edu.tw/"),
-                ID_PROVERBDICT => open_url("https://dict.idioms.moe.edu.tw/"),
-                ID_CHEWING_HELP => open_url("https://chewing.im/features.html"),
-                _ => {}
-            }
-        }
-    }
-
-    fn update_preedit(&mut self, context: &ITfContext, commit: String) -> Result<()> {
-        let mut composition_buf = String::new();
-        let mut segments = vec![];
-        let cursor = self.chewing_editor.cursor();
-        let bopomofo = self.chewing_editor.syllable_buffer_display();
-        let bopomofo_len = bopomofo.chars().count();
-        let mut need_push_bopomofo = !bopomofo.is_empty();
-
-        for it in self.chewing_editor.intervals() {
-            if (it.start <= cursor && it.end >= cursor) && need_push_bopomofo {
-                // Bopomofo splits the segment
-                let head_len = cursor - it.start;
-                composition_buf.extend(it.text.chars().take(head_len));
-                composition_buf.push_str(&bopomofo);
-                composition_buf.extend(it.text.chars().skip(head_len));
-                if cursor == it.start {
-                    segments.push((cursor, cursor + bopomofo_len));
-                    segments.push((it.start + bopomofo_len, it.end + bopomofo_len));
-                } else if cursor == it.end {
-                    segments.push((it.start, it.end));
-                    segments.push((cursor, cursor + bopomofo_len));
-                } else {
-                    segments.push((it.start, cursor));
-                    segments.push((cursor, cursor + bopomofo_len));
-                    segments.push((cursor + bopomofo_len, it.end));
-                }
-                need_push_bopomofo = false;
-            } else {
-                composition_buf.push_str(&it.text);
-                if it.start > cursor && !bopomofo.is_empty() {
-                    segments.push((it.start + bopomofo_len, it.end + bopomofo_len));
-                } else {
-                    segments.push((it.start, it.end));
-                }
-            }
-        }
-        if need_push_bopomofo {
-            segments.push((0, bopomofo_len));
-            composition_buf.push_str(&bopomofo);
-        }
-
-        // has something in composition buffer
-        if !composition_buf.is_empty() {
-            self.set_composition_string(context, &commit, &composition_buf, segments, cursor)?;
-        } else {
-            // nothing left in composition buffer, terminate composition status
-            if self.is_composing() {
-                self.set_composition_string(context, &commit, "", vec![], 0)?;
-            }
-            // We also need to make sure that the candidate window is not
-            // currently shown. When typing symbols with ` key, it's possible
-            // that the composition string empty, while the candidate window is
-            // shown. We should not terminate the composition in this case.
-            if self.candidate_list.is_none() {
-                self.end_composition(context)?;
-            }
-        }
-        Ok(())
-    }
-
     fn insert_text(&self, context: &ITfContext, text: &str) -> Result<()> {
         debug!(text; "going to request immediate text insertion");
-        let text = convert_output(&self.cfg.chewing_tsf, text);
-        let htext = text.as_str().into();
+        let htext = text.into();
         let session = InsertText::new(context.clone(), htext).into_object();
         request_edit_session(
             context,
@@ -1147,14 +522,12 @@ impl ChewingTextService {
     fn set_composition_string(
         &mut self,
         context: &ITfContext,
-        commit: &str,
-        preedit: &str,
+        commit: String,
+        preedit: String,
         segments: Vec<(usize, usize)>,
         cursor: usize,
     ) -> Result<()> {
         debug!(commit, preedit; "set composition string");
-        let commit = convert_output(&self.cfg.chewing_tsf, commit);
-        let preedit = convert_preedit(&self.cfg.chewing_tsf, preedit);
         if let Some(cell) = self.pending_edit.upgrade() {
             debug!(cursor, preedit:%; "Reuse existing edit session");
             cell.replace(Some(CompositionString {
@@ -1200,262 +573,6 @@ impl ChewingTextService {
         Ok(session.rect())
     }
 
-    fn show_message(
-        &mut self,
-        context: &ITfContext,
-        text: &HSTRING,
-        dur: Duration,
-    ) -> Result<(), scoped_error::Error> {
-        expect_error("Failed to show message", || {
-            let hwnd = unsafe {
-                let view = context.GetActiveView()?;
-                // UILess console may not have valid HWND
-                view.GetWnd().unwrap_or_default()
-            };
-            let notification = Notification::new(hwnd, self.thread_mgr.clone())?;
-            notification.set_model(NotificationModel {
-                text: text.clone(),
-                font_family: HSTRING::from(&self.cfg.chewing_tsf.font_family),
-                font_size: self.cfg.chewing_tsf.font_size as f32,
-                fg_color: color_s(&self.cfg.chewing_tsf.notify_fg_color),
-                bg_color: color_s(&self.cfg.chewing_tsf.notify_bg_color),
-                border_color: color_s(&self.cfg.chewing_tsf.notify_border_color),
-            });
-            if let Ok(rect) = self.get_selection_rect(context) {
-                notification.set_position(rect.left + 50, rect.bottom + 50);
-                // HACK set position again to use correct DPI setting
-                notification.set_position(rect.left + 50, rect.bottom + 50);
-            }
-            notification.show();
-            notification.set_timer(dur);
-            self.notification = Some(notification);
-            Ok(())
-        })
-    }
-
-    fn hide_message(&mut self) {
-        if let Some(notification) = self.notification.take() {
-            notification.set_timer(Duration::ZERO);
-            notification.end_ui_element();
-        }
-    }
-
-    fn update_candidates(&mut self, context: &ITfContext) -> Result<(), scoped_error::Error> {
-        expect_error("Failed to refresh candidate window", || {
-            if !self.chewing_editor.is_selecting() {
-                self.hide_candidates();
-                return Ok(());
-            }
-            if self.candidate_list.is_none() {
-                let view = unsafe { context.GetActiveView()? };
-                // UILess console may not have valid HWND
-                let hwnd = unsafe { view.GetWnd().unwrap_or_default() };
-                let candidate_list = CandidateList::new(hwnd, self.thread_mgr.clone())?;
-                self.candidate_list = Some(candidate_list);
-            }
-
-            let editor = &self.chewing_editor;
-            if let Some(candidate_list) = &self.candidate_list {
-                let cfg = &self.cfg.chewing_tsf;
-                let sel_keys = SEL_KEYS[cfg.sel_key_type as usize];
-                let n = editor.editor_options().candidates_per_page;
-                let total_page = editor.total_page()? as u32;
-                let current_page = editor.current_page_no()? as u32 + 1;
-                let mut items = editor.paginated_candidates()?;
-                if total_page == 0 {
-                    // TODO: handle this properly in chewing-rs
-                    self.chewing_editor.cancel_selecting()?;
-                    self.hide_candidates();
-                    return Ok(());
-                }
-                items.truncate(n);
-                let (items, indices) =
-                    dedup_candidates(items.iter().map(|it| convert_output(cfg, it)));
-                self.candidate_indices = indices;
-                candidate_list.set_model(Model {
-                    items,
-                    selkeys: sel_keys.chars().take(n).map(|k| k as u16).collect(),
-                    cand_per_row: cfg.cand_per_row as u32,
-                    total_page,
-                    current_page,
-                    font_family: HSTRING::from(&cfg.font_family),
-                    font_size: cfg.font_size as f32,
-                    fg_color: color_s(&cfg.font_fg_color),
-                    bg_color: color_s(&cfg.font_bg_color),
-                    highlight_fg_color: color_s(&cfg.font_highlight_fg_color),
-                    highlight_bg_color: color_s(&cfg.font_highlight_bg_color),
-                    border_color: color_s(&cfg.cand_list_border_color),
-                    selkey_color: color_s(&cfg.font_number_fg_color),
-                    use_cursor: cfg.cursor_cand_list,
-                    current_sel: 0,
-                });
-
-                candidate_list.show();
-
-                if let Ok(rect) = self.get_selection_rect(context) {
-                    candidate_list.set_position(rect.left, rect.bottom);
-                    // HACK set position again to use correct DPI setting
-                    candidate_list.set_position(rect.left, rect.bottom);
-                }
-            }
-
-            Ok(())
-        })
-    }
-
-    fn hide_candidates(&mut self) {
-        if let Some(candidate_list) = self.candidate_list.take() {
-            candidate_list.end_ui_element();
-        }
-    }
-
-    /// Saved to the registry so every app shares one switch: the others pick it
-    /// up when they next get focus.
-    fn toggle_simp_chinese(&mut self) -> Result<()> {
-        let cfg = &mut self.cfg.chewing_tsf;
-        cfg.output_simp_chinese = !cfg.output_simp_chinese;
-        debug!(
-            "toggle output simplified chinese: {}",
-            cfg.output_simp_chinese
-        );
-        self.cfg.save_reg();
-        self.update_lang_buttons()
-    }
-
-    fn toggle_simp_vocabulary(&mut self) -> Result<()> {
-        let cfg = &mut self.cfg.chewing_tsf;
-        cfg.output_simp_vocabulary = !cfg.output_simp_vocabulary;
-        self.cfg.save_reg();
-        self.update_lang_buttons()
-    }
-
-    fn toggle_shape_mode(&mut self) -> Result<()> {
-        self.chewing_editor.set_editor_options(|opt| {
-            opt.character_form = match opt.character_form {
-                CharacterForm::Fullwidth => CharacterForm::Halfwidth,
-                CharacterForm::Halfwidth => CharacterForm::Fullwidth,
-            }
-        });
-        let check_flag = match self.chewing_editor.editor_options().character_form {
-            CharacterForm::Fullwidth => MF_CHECKED,
-            CharacterForm::Halfwidth => MF_UNCHECKED,
-        };
-        unsafe {
-            CheckMenuItem(self.popup_menu, ID_SWITCH_SHAPE, check_flag.0);
-        }
-        self.update_lang_buttons()?;
-
-        Ok(())
-    }
-
-    /// Saved to the registry like the simplified switch, so every app types
-    /// the same way; the others pick it up when they next get focus.
-    fn toggle_pinyin(&mut self, context: &ITfContext) -> Result<()> {
-        let cfg = &mut self.cfg.chewing_tsf;
-        cfg.pinyin = !cfg.pinyin;
-        self.cfg.save_reg();
-        self.apply_input_method();
-        if self.cfg.chewing_tsf.show_notification {
-            let msg = if self.cfg.chewing_tsf.pinyin {
-                "拼音"
-            } else {
-                "注音"
-            };
-            self.show_message(context, &msg.into(), Duration::from_millis(500))?;
-        }
-        Ok(())
-    }
-
-    /// Sets up the editor to type zhuyin in the configured layout, or pinyin.
-    fn apply_input_method(&mut self) {
-        let cfg = &self.cfg.chewing_tsf;
-        self.kbtype = KeyboardLayoutCompat::try_from(cfg.keyboard_layout as u8)
-            .unwrap_or(KeyboardLayoutCompat::Default);
-        // Pinyin is spelled with the letters on the keys, whatever the zhuyin
-        // layout moves around.
-        self.keymap = keymap_from_kbtype(if cfg.pinyin {
-            KeyboardLayoutCompat::Default
-        } else {
-            self.kbtype
-        });
-        if cfg.simulate_english_layout != 0 {
-            let sim = SimulatedKeyboard::from(cfg.simulate_english_layout);
-            self.keymap = sim.into();
-        }
-        let editor = &mut self.chewing_editor;
-        if cfg.pinyin {
-            editor.set_syllable_editor(Box::new(ContinuousPinyin::default()));
-            // Typed without tones, a syllable has to match all of them, and an
-            // initial alone every syllable it starts; only this engine does.
-            editor.set_editor_options(|opt| {
-                opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
-            });
-        } else {
-            editor.set_syllable_editor(syl_editor_from_kbtype(self.kbtype));
-            editor.set_editor_options(|opt| {
-                opt.conversion_engine = match cfg.conv_engine {
-                    0 => ConversionEngineKind::SimpleEngine,
-                    2 => ConversionEngineKind::FuzzyChewingEngine,
-                    _ => ConversionEngineKind::ChewingEngine,
-                }
-            });
-        }
-    }
-
-    fn toggle_hsu_keyboard(&mut self, context: &ITfContext) -> Result<()> {
-        if self.kbtype == KeyboardLayoutCompat::Hsu {
-            self.kbtype = KeyboardLayoutCompat::Default;
-            self.keymap = keymap_from_kbtype(self.kbtype);
-            self.chewing_editor
-                .set_syllable_editor(syl_editor_from_kbtype(KeyboardLayoutCompat::Default));
-            self.show_message(
-                context,
-                &HSTRING::from("標準鍵盤"),
-                Duration::from_millis(500),
-            )?;
-        } else {
-            self.kbtype = KeyboardLayoutCompat::Hsu;
-            self.keymap = keymap_from_kbtype(self.kbtype);
-            self.chewing_editor
-                .set_syllable_editor(syl_editor_from_kbtype(KeyboardLayoutCompat::Hsu));
-            self.show_message(
-                context,
-                &HSTRING::from("許氏鍵盤"),
-                Duration::from_millis(500),
-            )?;
-        }
-        Ok(())
-    }
-
-    fn sync_lang_mode(&self, internal: bool) -> Result<()> {
-        debug!("set pending_lang_mode_change to {internal}");
-        self.pending_lang_mode_change.set(internal);
-        if !self.lang_mode.get().is_disabled() {
-            let cfg = &self.cfg.chewing_tsf;
-            let evt = SystemKeyboardEvent::default().to_keyboard_event(self.keymap);
-            if cfg.enable_caps_lock {
-                let (locked_mode, unlocked_mode) = if cfg.lock_chinese_on_caps_lock {
-                    (TsfLangMode::Chinese, TsfLangMode::English)
-                } else {
-                    (TsfLangMode::English, TsfLangMode::Chinese)
-                };
-                if evt.is_state_on(KeyState::CapsLock) {
-                    self.lang_mode.set(locked_mode);
-                } else {
-                    self.lang_mode.set(unlocked_mode);
-                }
-            }
-        }
-        debug!("new lang_mode={:?}", self.lang_mode.get());
-        self.update_lang_buttons()?;
-
-        Ok(())
-    }
-
-    pub(crate) fn should_sync_keyboard_openclose(&self) -> bool {
-        self.cfg.chewing_tsf.sync_lang_mode_openclose
-    }
-
     fn init_openclose(&self, tid: u32) -> Result<()> {
         let compartment_mgr: ITfCompartmentMgr = self.thread_mgr.cast()?;
         unsafe {
@@ -1467,178 +584,94 @@ impl ChewingTextService {
         Ok(())
     }
 
-    fn toggle_lang_mode(&mut self) -> Result<()> {
-        let prev = self.lang_mode.get();
-        self.lang_mode.update(|v| match v {
-            TsfLangMode::English => TsfLangMode::Chinese,
-            TsfLangMode::Chinese => TsfLangMode::English,
-            TsfLangMode::DisabledEnglish => TsfLangMode::DisabledChinese,
-            TsfLangMode::DisabledChinese => TsfLangMode::DisabledEnglish,
-        });
-        self.sync_lang_mode(true)?;
-
-        if prev != self.lang_mode.get() {
-            unsafe {
-                let doc_mgr = self
-                    .thread_mgr
-                    .GetFocus()
-                    .context("failed to get current ITfDocumentMgr")?;
-                let context = doc_mgr
-                    .GetTop()
-                    .context("failed to get current ITfContext")?;
-                self.chewing_editor.clear_syllable_editor();
-                self.update_preedit(&context, String::new())?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn get_lang_icon(&self) -> HICON {
-        let icons = match (
-            self.lang_mode.get(),
-            self.cfg.chewing_tsf.output_simp_chinese,
-        ) {
-            (TsfLangMode::Chinese, true) => self.lang_icons.sc,
-            (TsfLangMode::Chinese, false) => self.lang_icons.tc,
-            _ => self.lang_icons.en,
-        };
-        match ThemeDetector::detect_theme() {
-            WindowsTheme::Light | WindowsTheme::Unknown => icons.light,
-            WindowsTheme::Dark => icons.dark,
-        }
-    }
-
-    fn is_composing(&self) -> bool {
-        // when candidate window is shown we are composing even without a composition
-        self.composition.borrow().is_some() || self.candidate_list.is_some()
-    }
-
-    fn init_chewing_context(&mut self) -> Result<()> {
-        self.apply_init_config()?;
-        self.sync_lang_mode(true)?;
-        Ok(())
-    }
-
-    fn build_editor_from_cfg(cfg: &ChewingTsfConfig) -> Result<Editor> {
-        // Recreate editor to load latest user files
-        let mut editor = new_editor()?;
-        editor.set_editor_options(|opt| {
-            opt.easy_symbol_input = cfg.easy_symbols_with_shift || cfg.easy_symbols_with_shift_ctrl;
-            // NB: Historically the config was inverted
-            opt.user_phrase_add_dir = if cfg.add_phrase_forward {
-                UserPhraseAddDirection::Backward
-            } else {
-                UserPhraseAddDirection::Forward
-            };
-            opt.phrase_choice_rearward = cfg.phrase_choice_rearward;
-            opt.auto_shift_cursor = cfg.advance_after_selection;
-            opt.candidates_per_page = cfg.cand_per_page as usize;
-            opt.esc_clear_all_buffer = cfg.esc_clean_all_buf;
-            opt.space_is_select_key = cfg.show_cand_with_space_key;
-            opt.disable_auto_learn_phrase = !cfg.enable_auto_learn;
-            opt.enable_fullwidth_toggle_key = cfg.enable_fullwidth_toggle_key;
-            opt.sort_candidates_by_frequency = cfg.sort_candidates_by_frequency;
-            // TODO experimental
-            opt.auto_snapshot_selections = true;
-        });
-        Ok(editor)
-    }
-
-    fn apply_config_if_changed(&mut self) -> Result<()> {
-        if self.cfg.reload_if_needed()? {
-            self.apply_runtime_config()?;
-        }
-        Ok(())
-    }
-
-    /// Initializes the config to the user default
-    fn apply_init_config(&mut self) -> Result<()> {
-        self.chewing_editor.set_editor_options(|opt| {
-            if self.cfg.chewing_tsf.default_full_space {
-                opt.character_form = CharacterForm::Fullwidth;
-            }
-            opt.auto_commit_threshold = 50;
-        });
-
-        self.lang_mode.set(if self.cfg.chewing_tsf.default_english {
-            TsfLangMode::English
-        } else {
-            TsfLangMode::Chinese
-        });
-        self.apply_runtime_config()?;
-        Ok(())
-    }
-
-    /// Applys config changes that should be effective at runtime
-    fn apply_runtime_config(&mut self) -> Result<()> {
-        self.chewing_editor = Self::build_editor_from_cfg(&self.cfg.chewing_tsf)?;
-        self.apply_input_method();
-        let _ = self.update_lang_buttons();
-        let keybindings = self
-            .cfg
-            .chewing_tsf
-            .keybind
-            .iter()
-            .filter_map(|kb| Keybinding::try_from(kb).ok())
-            .collect();
-        self.keybindings = keybindings;
-        Ok(())
-    }
-
-    fn update_lang_buttons(&self) -> Result<()> {
-        let icon = self.get_lang_icon();
+    fn update_lang_buttons(&self, engine: &Engine) -> Result<()> {
+        let icon = engine.lang_icon(&self.lang_icons);
         self.switch_lang_button.set_icon(icon)?;
         self.ime_mode_button.set_icon(icon)?;
         let _ = self
             .ime_mode_button
-            .set_enabled(!self.lang_mode.get().is_disabled());
+            .set_enabled(!engine.lang_mode.get().is_disabled());
         // TODO extract shape mode change to dedicated method
-        let shape_mode = self.chewing_editor.editor_options().character_form;
+        let shape_mode = engine.chewing_editor.editor_options().character_form;
         let icon = if shape_mode == CharacterForm::Fullwidth {
             self.lang_icons.full_shape
         } else {
             self.lang_icons.half_shape
         };
         self.switch_shape_button.set_icon(icon)?;
-
-        let cfg = &self.cfg.chewing_tsf;
-        for (id, checked) in [
-            (ID_SWITCH_SHAPE, shape_mode == CharacterForm::Fullwidth),
-            (ID_OUTPUT_SIMP_CHINESE, cfg.output_simp_chinese),
-            (ID_OUTPUT_SIMP_VOCABULARY, cfg.output_simp_vocabulary),
-        ] {
-            let flag = if checked { MF_CHECKED } else { MF_UNCHECKED };
-            unsafe {
-                CheckMenuItem(self.popup_menu, id, flag.0);
-            }
-        }
+        engine.check_menu_items(self.popup_menu);
         Ok(())
     }
+}
 
-    /// Maps a selection key to the digit chewing selects with. Plain digits
-    /// count as slots too, since chewing would otherwise select by them
-    /// directly. `None` means nothing is shown in that slot.
-    fn map_sel_key(&self, mut evt: KeyboardEvent) -> Option<KeyboardEvent> {
-        let key = evt.ksym.to_unicode();
-        let slot = SEL_KEYS[self.cfg.chewing_tsf.sel_key_type as usize]
-            .chars()
-            .position(|it| it == key)
-            .or_else(|| key.to_digit(10).map(|digit| (digit as usize + 9) % 10));
-        let Some(slot) = slot else {
-            return Some(evt);
-        };
-        match *self.candidate_indices.get(slot)? {
-            idx @ 0..9 => {
-                evt.code = Keycode(keycode::KEY_1.0 + idx as u8);
-                evt.ksym = Keysym(keysym::SYM_1.0 + idx as u32);
-            }
-            _ => {
-                evt.code = keycode::KEY_0;
-                evt.ksym = keysym::SYM_0;
-            }
+impl Tsf<'_> {
+    fn context(&self) -> Result<ITfContext> {
+        if let Some(context) = &self.context {
+            return Ok(context.clone());
         }
-        Some(evt)
+        unsafe {
+            let doc_mgr = self
+                .ui
+                .thread_mgr
+                .GetFocus()
+                .context("failed to get current ITfDocumentMgr")?;
+            doc_mgr.GetTop().context("failed to get current ITfContext")
+        }
+    }
+}
+
+impl Frontend for Tsf<'_> {
+    fn has_composition(&self) -> bool {
+        self.ui.has_composition()
+    }
+
+    fn is_context_mutable(&self) -> Result<bool> {
+        Ok(self.ui.is_context_mutable(&self.context()?)?)
+    }
+
+    fn caret_rect(&self) -> Result<RECT> {
+        self.ui.get_selection_rect(&self.context()?)
+    }
+
+    fn popup_parent(&self) -> Result<HWND> {
+        let view = unsafe { self.context()?.GetActiveView()? };
+        // UILess console may not have valid HWND
+        Ok(unsafe { view.GetWnd().unwrap_or_default() })
+    }
+
+    fn thread_mgr(&self) -> Option<ITfThreadMgr> {
+        Some(self.ui.thread_mgr.clone())
+    }
+
+    fn insert_text(&mut self, text: &str) -> Result<()> {
+        let context = self.context()?;
+        self.ui.insert_text(&context, text)
+    }
+
+    fn set_composition_string(
+        &mut self,
+        commit: String,
+        preedit: String,
+        segments: Vec<(usize, usize)>,
+        cursor: usize,
+    ) -> Result<()> {
+        let context = self.context()?;
+        self.ui
+            .set_composition_string(&context, commit, preedit, segments, cursor)
+    }
+
+    fn end_composition(&mut self) -> Result<()> {
+        let context = self.context()?;
+        self.ui.end_composition(&context)
+    }
+
+    fn update_lang_buttons(&self, engine: &Engine) -> Result<()> {
+        self.ui.update_lang_buttons(engine)
+    }
+
+    fn lang_mode_changed(&self) {
+        debug!("set pending_lang_mode_change to true");
+        self.ui.pending_lang_mode_change.set(true);
     }
 }
 
@@ -1669,352 +702,28 @@ impl<'a> ReentrantOps<'a> {
         let Some(tip) = self.tip.as_ref() else {
             bail!("chewing_tip is not initialized");
         };
-        debug!(force, pending_lang_mode_change=tip.pending_lang_mode_change.get(); "sync_keyboard_openclose");
-        if !force && !tip.pending_lang_mode_change.get() {
+        debug!(force, pending_lang_mode_change=tip.ui.pending_lang_mode_change.get(); "sync_keyboard_openclose");
+        if !force && !tip.ui.pending_lang_mode_change.get() {
             return Ok(());
         }
-        if !tip.cfg.chewing_tsf.sync_lang_mode_openclose {
+        if !tip.engine.cfg.chewing_tsf.sync_lang_mode_openclose {
             // sync openclose is disabled by default
-            tip.pending_lang_mode_change.set(false);
+            tip.ui.pending_lang_mode_change.set(false);
             return Ok(());
         }
-        let compartment_mgr: ITfCompartmentMgr = tip.thread_mgr.cast()?;
+        let compartment_mgr: ITfCompartmentMgr = tip.ui.thread_mgr.cast()?;
         unsafe {
             let compartment =
                 compartment_mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE)?;
-            let openclose: i32 = match tip.lang_mode.get() {
+            let openclose: i32 = match tip.engine.lang_mode.get() {
                 TsfLangMode::Chinese => 1,
                 TsfLangMode::English => 0,
                 _ => 0,
             };
             // NB: recursively call this inside compartment callback will fail
-            let _ = compartment.SetValue(tip.tid, &openclose.into());
+            let _ = compartment.SetValue(tip.ui.tid, &openclose.into());
         }
 
         Ok(())
-    }
-}
-
-fn new_editor() -> Result<Editor> {
-    let dictionary_dir = dictionary_dir()?;
-    let user_dir = user_dir()?;
-    // Done here rather than by tsfreg, whose elevated %AppData% may belong to
-    // another account. Once per process: the editor is rebuilt on every focus.
-    static SHARE_USER_DIR: Once = Once::new();
-    SHARE_USER_DIR.call_once(|| {
-        // Always fails inside an AppContainer; the next desktop app sets it up.
-        if let Err(error) = share_user_dir(&user_dir) {
-            info!("{}", error.report());
-        }
-    });
-    Ok(Editor::chewing(
-        Some(dictionary_dir.to_string_lossy().into_owned()),
-        Some(user_dir.to_string_lossy().into_owned()),
-    )?)
-}
-
-/// The portable layout keeps the dictionary beside the per-architecture DLL
-/// folders (`<root>\x64\chewing_tip.dll`, `<root>\x86\...`, `<root>\Dictionary`),
-/// so the folder works wherever it was unzipped.
-fn dictionary_dir() -> Result<PathBuf> {
-    let module = HMODULE(G_HINSTANCE.load(Ordering::Relaxed) as *mut c_void);
-    let mut buf = vec![0u16; 32768];
-    let len = unsafe { GetModuleFileNameW(Some(module), &mut buf) } as usize;
-    if len == 0 {
-        bail!("unable to locate chewing_tip.dll");
-    }
-    let dll_path = PathBuf::from(OsString::from_wide(&buf[..len]));
-    let root = dll_path
-        .parent()
-        .and_then(Path::parent)
-        .context("chewing_tip.dll is not inside an architecture folder")?;
-    Ok(root.join("Dictionary"))
-}
-
-/// Converts text leaving the IME: candidates, the composition and commits.
-fn convert_output(cfg: &ChewingTsfConfig, text: &str) -> String {
-    match (cfg.output_simp_chinese, cfg.output_simp_vocabulary) {
-        (false, _) => text.to_owned(),
-        (true, false) => zhconv(text, Variant::ZhHans),
-        (true, true) => zhconv(text, Variant::ZhCN),
-    }
-}
-
-/// Segments and the cursor are character offsets into the unconverted text,
-/// so a vocabulary swap that changes the length only gets the script
-/// conversion while composing; the commit still gets the full one.
-fn convert_preedit(cfg: &ChewingTsfConfig, text: &str) -> String {
-    let converted = convert_output(cfg, text);
-    if converted.chars().count() == text.chars().count() {
-        converted
-    } else {
-        zhconv(text, Variant::ZhHans)
-    }
-}
-
-/// Converting can map several candidates to the same text (體 and 体 both
-/// become 体). Keeps the first, higher ranked, of each and returns the editor
-/// index every shown item stands for.
-fn dedup_candidates(items: impl IntoIterator<Item = String>) -> (Vec<String>, Vec<usize>) {
-    let mut shown: Vec<String> = vec![];
-    let mut indices = vec![];
-    for (index, item) in items.into_iter().enumerate() {
-        if !shown.contains(&item) {
-            shown.push(item);
-            indices.push(index);
-        }
-    }
-    (shown, indices)
-}
-
-fn syl_editor_from_kbtype(kbtype: KeyboardLayoutCompat) -> Box<dyn SyllableEditor> {
-    use zhuyin_layout::*;
-    match kbtype {
-        KeyboardLayoutCompat::Default => Box::new(Standard::new()),
-        KeyboardLayoutCompat::Hsu => Box::new(Hsu::new()),
-        KeyboardLayoutCompat::Ibm => Box::new(Ibm::new()),
-        KeyboardLayoutCompat::GinYieh => Box::new(GinYieh::new()),
-        KeyboardLayoutCompat::Et => Box::new(Et::new()),
-        KeyboardLayoutCompat::Et26 => Box::new(Et26::new()),
-        KeyboardLayoutCompat::Dvorak => Box::new(Standard::new()),
-        KeyboardLayoutCompat::DvorakHsu => Box::new(Hsu::new()),
-        KeyboardLayoutCompat::DachenCp26 => Box::new(DaiChien26::new()),
-        KeyboardLayoutCompat::HanyuPinyin => Box::new(Pinyin::hanyu()),
-        KeyboardLayoutCompat::ThlPinyin => Box::new(Pinyin::thl()),
-        KeyboardLayoutCompat::Mps2Pinyin => Box::new(Pinyin::mps2()),
-        KeyboardLayoutCompat::Carpalx
-        | KeyboardLayoutCompat::ColemakDhAnsi
-        | KeyboardLayoutCompat::ColemakDhOrth
-        | KeyboardLayoutCompat::Workman
-        | KeyboardLayoutCompat::Colemak => Box::new(Standard::new()),
-    }
-}
-
-fn keymap_from_kbtype(kbtype: KeyboardLayoutCompat) -> KeymapOp {
-    match kbtype {
-        KeyboardLayoutCompat::Dvorak => KeymapOp::Ksym(&INVERTED_DVORAK_MAP),
-        KeyboardLayoutCompat::DvorakHsu => KeymapOp::Ksym(&DVORAK_MAP),
-        KeyboardLayoutCompat::Carpalx => KeymapOp::Ksym(&INVERTED_QGMLWY_MAP),
-        KeyboardLayoutCompat::ColemakDhAnsi => KeymapOp::Ksym(&INVERTED_COLEMAK_DH_ANSI_MAP),
-        KeyboardLayoutCompat::ColemakDhOrth => KeymapOp::Ksym(&INVERTED_COLEMAK_DH_ORTH_MAP),
-        KeyboardLayoutCompat::Workman => KeymapOp::Ksym(&INVERTED_WORKMAN_MAP),
-        KeyboardLayoutCompat::Colemak => KeymapOp::Ksym(&INVERTED_COLEMAK_MAP),
-        _ => KeymapOp::None,
-    }
-}
-
-/// A tone key typed right after a character re-types that character with the
-/// new tone: 嗎 then ˇ gives 馬. Chewing would otherwise start a new syllable
-/// with the tone alone. Returns the syllable the character had.
-fn change_tone(
-    editor: &mut Editor,
-    kbtype: KeyboardLayoutCompat,
-    evt: KeyboardEvent,
-) -> Option<Syllable> {
-    if evt.has_modifiers() {
-        return None;
-    }
-    let tone = if evt.ksym == SYM_SPACE {
-        // Space is tone 1 in every layout, but they only read it to end a
-        // syllable, so the probe below can't see it.
-        if editor.editor_options().space_is_select_key {
-            return None;
-        }
-        None
-    } else {
-        // Asking the layout keeps this right for every layout, including those
-        // where the tone keys also type consonants, such as Hsu.
-        let mut probe = syl_editor_from_kbtype(kbtype);
-        probe.key_press(evt);
-        let typed = probe.read();
-        if typed.has_initial() || typed.has_medial() || typed.has_rime() {
-            return None;
-        }
-        Some(typed.tone()?)
-    };
-    retone(editor, kbtype, tone)
-}
-
-/// Re-types the character before the cursor with `tone`, None being tone 1,
-/// which chewing spells without a tone. Returns the syllable it had.
-fn retone(
-    editor: &mut Editor,
-    kbtype: KeyboardLayoutCompat,
-    tone: Option<Bopomofo>,
-) -> Option<Syllable> {
-    if editor.editor_options().language_mode != LanguageMode::Chinese
-        || !editor.is_entering()
-        || editor.entering_syllable()
-        || editor.cursor() == 0
-    {
-        return None;
-    }
-    let old = editor.symbols()[editor.cursor() - 1].to_syllable()?;
-    let mut new = old;
-    match tone {
-        Some(tone) => new.update(tone),
-        None => {
-            new.remove_tone();
-        }
-    }
-    let len = editor.len();
-    editor.process_keyevent(
-        KeyboardEvent::builder()
-            .code(keycode::KEY_BACKSPACE)
-            .ksym(keysym::SYM_BACKSPACE)
-            .build(),
-    );
-    insert_syllable(editor, kbtype, new);
-    // Chewing drops a syllable no word is spelled with; keep the old one then.
-    if editor.len() < len {
-        insert_syllable(editor, kbtype, old);
-    }
-    Some(old)
-}
-
-fn insert_syllable(editor: &mut Editor, kbtype: KeyboardLayoutCompat, syllable: Syllable) {
-    editor.set_syllable_editor(Box::new(PresetSyllable {
-        syllable,
-        started: false,
-    }));
-    let key = KeyboardEvent::builder()
-        .code(keycode::KEY_A)
-        .ksym(keysym::SYM_LOWER_A)
-        .build();
-    editor.process_keyevent(key);
-    editor.process_keyevent(key);
-    editor.set_syllable_editor(syl_editor_from_kbtype(kbtype));
-}
-
-/// Hands chewing one ready-made syllable, so a syllable can be put into the
-/// composition without knowing which keys type it in the current layout.
-/// Chewing starts a syllable when a key is absorbed and inserts it when a key
-/// commits, so the first key press absorbs and the second commits.
-#[derive(Debug, Clone, Copy)]
-struct PresetSyllable {
-    syllable: Syllable,
-    started: bool,
-}
-
-impl std::fmt::Display for PresetSyllable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("PresetSyllable")
-    }
-}
-
-impl SyllableEditor for PresetSyllable {
-    fn key_press(&mut self, _key: KeyboardEvent) -> KeyBehavior {
-        if mem::replace(&mut self.started, true) {
-            KeyBehavior::Commit
-        } else {
-            KeyBehavior::Absorb
-        }
-    }
-    fn remove_last(&mut self) {
-        self.syllable.pop();
-    }
-    fn clear(&mut self) {
-        self.syllable.clear();
-    }
-    fn is_empty(&self) -> bool {
-        self.syllable.is_empty()
-    }
-    fn read(&self) -> Syllable {
-        self.syllable
-    }
-    fn clone(&self) -> Box<dyn SyllableEditor> {
-        Box::new(*self)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use chewing::dictionary::StringTableBuilder;
-    use chewing::editor::zhuyin_layout::KeyboardLayoutCompat;
-    use chewing::editor::{BasicEditor, EditorBuilder};
-    use chewing::input::keymap::{QWERTY_MAP, map_ascii};
-    use chewing::lm::StaticDictBuilder;
-    use chewing::syl;
-    use chewing::zhuyin::Bopomofo as bpmf;
-    use chewing_tip_core::config::ChewingTsfConfig;
-
-    use super::{change_tone, convert_output, convert_preedit, dedup_candidates, retone};
-
-    fn simplified(vocabulary: bool) -> ChewingTsfConfig {
-        ChewingTsfConfig {
-            output_simp_chinese: true,
-            output_simp_vocabulary: vocabulary,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn selecting_a_slot_skips_hidden_duplicates() {
-        let cfg = simplified(false);
-        let (shown, indices) =
-            dedup_candidates(["體", "体", "綈"].map(|it| convert_output(&cfg, it)));
-        assert_eq!(shown, ["体", "绨"]);
-        // The second slot shows 绨, so it must select 綈, not the hidden 体.
-        assert_eq!(indices, [0, 2]);
-    }
-
-    #[test]
-    fn preedit_keeps_its_length_for_segment_offsets() {
-        let cfg = simplified(true);
-        assert_eq!(convert_output(&cfg, "網際網路"), "互联网");
-        assert_eq!(convert_preedit(&cfg, "網際網路"), "网际网路");
-        assert_eq!(convert_preedit(&cfg, "軟體"), "软件");
-    }
-
-    #[test]
-    fn tone_key_retypes_the_previous_character() {
-        let mut strings = StringTableBuilder::new();
-        strings.insert("嗎");
-        strings.insert("馬");
-        strings.insert("媽");
-        let strings = strings.build();
-        let mut dict = StaticDictBuilder::new();
-        dict.insert(
-            &[syl![bpmf::M, bpmf::A, bpmf::TONE5]],
-            strings.get_wid("嗎").unwrap(),
-        );
-        dict.insert(
-            &[syl![bpmf::M, bpmf::A, bpmf::TONE3]],
-            strings.get_wid("馬").unwrap(),
-        );
-        dict.insert(&[syl![bpmf::M, bpmf::A]], strings.get_wid("媽").unwrap());
-        let mut editor = EditorBuilder::new()
-            .string_table(strings)
-            .static_dict(dict.build())
-            .build();
-        let key = |ascii| map_ascii(&QWERTY_MAP, ascii);
-        for ascii in *b"a87" {
-            editor.process_keyevent(key(ascii));
-        }
-        assert_eq!(editor.display(), "嗎");
-
-        let tone3 = syl![bpmf::M, bpmf::A, bpmf::TONE3];
-        let default = KeyboardLayoutCompat::Default;
-        assert!(change_tone(&mut editor, default, key(b'3')).is_some());
-        assert_eq!(editor.display(), "馬");
-        // No word here is ㄇㄚˋ; losing the character would be worse than
-        // ignoring the key.
-        assert_eq!(change_tone(&mut editor, default, key(b'4')), Some(tone3));
-        assert_eq!(editor.display(), "馬");
-        // D is ˊ in Hsu only after a rime; alone it starts ㄉ, so it must
-        // begin the next character.
-        assert!(change_tone(&mut editor, KeyboardLayoutCompat::Hsu, key(b'd')).is_none());
-        assert_eq!(editor.display(), "馬");
-
-        // Space is tone 1, and what it returns lets a second Space undo it.
-        let old = change_tone(&mut editor, default, key(b' '));
-        assert_eq!(old, Some(tone3));
-        assert_eq!(editor.display(), "媽");
-        retone(&mut editor, default, old.unwrap().tone());
-        assert_eq!(editor.display(), "馬");
-        // Someone who set Space to open the candidate list still gets that.
-        editor.set_editor_options(|opt| opt.space_is_select_key = true);
-        assert!(change_tone(&mut editor, default, key(b' ')).is_none());
-        assert_eq!(editor.display(), "馬");
     }
 }
