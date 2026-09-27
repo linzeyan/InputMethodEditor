@@ -60,6 +60,7 @@ use super::edit_session::{EndComposition, SelectionRect, SetCompositionString};
 use super::key_event::SystemKeyboardEvent;
 use super::lang_bar::LangBarButton;
 use super::menu::Menu;
+use super::pinyin::{self, ContinuousPinyin};
 use super::resources::*;
 use super::theme::{ThemeDetector, WindowsTheme};
 use super::ui_elements::{CandidateList, FilterKeyResult, Model, Notification, NotificationModel};
@@ -561,6 +562,22 @@ impl ChewingTextService {
                 "toggle_hsu_keyboard" => {
                     self.toggle_hsu_keyboard(context)?;
                 }
+                "toggle_pinyin" => {
+                    if self.cfg.chewing_tsf.pinyin && self.chewing_editor.entering_syllable() {
+                        self.chewing_editor.process_keyevent(pinyin::end_syllable());
+                    }
+                    // What is being typed goes out first: toneless pinyin
+                    // syllables would convert differently under zhuyin's engine.
+                    if !self.chewing_editor.is_empty() {
+                        self.chewing_editor.commit()?;
+                        self.chewing_editor.flush();
+                        // Like the text action with nothing to add: the commit
+                        // goes out below and the key goes no further.
+                        text_action = Some(String::new());
+                        handled = false;
+                    }
+                    self.toggle_pinyin(context)?;
+                }
                 "text" => {
                     if !self.chewing_editor.is_empty() {
                         self.chewing_editor.commit()?;
@@ -583,6 +600,13 @@ impl ChewingTextService {
             if handled {
                 return Ok(true);
             }
+        }
+
+        if self.cfg.chewing_tsf.pinyin
+            && self.chewing_editor.entering_syllable()
+            && !pinyin::takes(&evt)
+        {
+            self.chewing_editor.process_keyevent(pinyin::end_syllable());
         }
 
         if text_action.is_some() {
@@ -639,7 +663,9 @@ impl ChewingTextService {
                 // Two Spaces type a space and leave the character as it was.
                 retone(&mut self.chewing_editor, self.kbtype, old.tone());
                 self.chewing_editor.process_keyevent(evt);
-            } else if let Some(old) = change_tone(&mut self.chewing_editor, self.kbtype, evt) {
+            } else if !self.cfg.chewing_tsf.pinyin
+                && let Some(old) = change_tone(&mut self.chewing_editor, self.kbtype, evt)
+            {
                 if evt.ksym == SYM_SPACE {
                     self.space_undo = Some(old);
                 }
@@ -1322,6 +1348,60 @@ impl ChewingTextService {
         Ok(())
     }
 
+    /// Saved to the registry like the simplified switch, so every app types
+    /// the same way; the others pick it up when they next get focus.
+    fn toggle_pinyin(&mut self, context: &ITfContext) -> Result<()> {
+        let cfg = &mut self.cfg.chewing_tsf;
+        cfg.pinyin = !cfg.pinyin;
+        self.cfg.save_reg();
+        self.apply_input_method();
+        if self.cfg.chewing_tsf.show_notification {
+            let msg = if self.cfg.chewing_tsf.pinyin {
+                "拼音"
+            } else {
+                "注音"
+            };
+            self.show_message(context, &msg.into(), Duration::from_millis(500))?;
+        }
+        Ok(())
+    }
+
+    /// Sets up the editor to type zhuyin in the configured layout, or pinyin.
+    fn apply_input_method(&mut self) {
+        let cfg = &self.cfg.chewing_tsf;
+        self.kbtype = KeyboardLayoutCompat::try_from(cfg.keyboard_layout as u8)
+            .unwrap_or(KeyboardLayoutCompat::Default);
+        // Pinyin is spelled with the letters on the keys, whatever the zhuyin
+        // layout moves around.
+        self.keymap = keymap_from_kbtype(if cfg.pinyin {
+            KeyboardLayoutCompat::Default
+        } else {
+            self.kbtype
+        });
+        if cfg.simulate_english_layout != 0 {
+            let sim = SimulatedKeyboard::from(cfg.simulate_english_layout);
+            self.keymap = sim.into();
+        }
+        let editor = &mut self.chewing_editor;
+        if cfg.pinyin {
+            editor.set_syllable_editor(Box::new(ContinuousPinyin::default()));
+            // Typed without tones, a syllable has to match all of them, and an
+            // initial alone every syllable it starts; only this engine does.
+            editor.set_editor_options(|opt| {
+                opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
+            });
+        } else {
+            editor.set_syllable_editor(syl_editor_from_kbtype(self.kbtype));
+            editor.set_editor_options(|opt| {
+                opt.conversion_engine = match cfg.conv_engine {
+                    0 => ConversionEngineKind::SimpleEngine,
+                    2 => ConversionEngineKind::FuzzyChewingEngine,
+                    _ => ConversionEngineKind::ChewingEngine,
+                }
+            });
+        }
+    }
+
     fn toggle_hsu_keyboard(&mut self, context: &ITfContext) -> Result<()> {
         if self.kbtype == KeyboardLayoutCompat::Hsu {
             self.kbtype = KeyboardLayoutCompat::Default;
@@ -1459,17 +1539,9 @@ impl ChewingTextService {
             opt.disable_auto_learn_phrase = !cfg.enable_auto_learn;
             opt.enable_fullwidth_toggle_key = cfg.enable_fullwidth_toggle_key;
             opt.sort_candidates_by_frequency = cfg.sort_candidates_by_frequency;
-            opt.conversion_engine = match cfg.conv_engine {
-                0 => ConversionEngineKind::SimpleEngine,
-                2 => ConversionEngineKind::FuzzyChewingEngine,
-                _ => ConversionEngineKind::ChewingEngine,
-            };
             // TODO experimental
             opt.auto_snapshot_selections = true;
         });
-        let kbtype = KeyboardLayoutCompat::try_from(cfg.keyboard_layout as u8)
-            .unwrap_or(KeyboardLayoutCompat::Default);
-        editor.set_syllable_editor(syl_editor_from_kbtype(kbtype));
         Ok(editor)
     }
 
@@ -1500,17 +1572,12 @@ impl ChewingTextService {
 
     /// Applys config changes that should be effective at runtime
     fn apply_runtime_config(&mut self) -> Result<()> {
-        let cfg = &self.cfg.chewing_tsf;
-        self.kbtype = KeyboardLayoutCompat::try_from(cfg.keyboard_layout as u8)
-            .unwrap_or(KeyboardLayoutCompat::Default);
-        self.keymap = keymap_from_kbtype(self.kbtype);
-        if cfg.simulate_english_layout != 0 {
-            let sim = SimulatedKeyboard::from(cfg.simulate_english_layout);
-            self.keymap = sim.into();
-        }
-        self.chewing_editor = Self::build_editor_from_cfg(cfg)?;
+        self.chewing_editor = Self::build_editor_from_cfg(&self.cfg.chewing_tsf)?;
+        self.apply_input_method();
         let _ = self.update_lang_buttons();
-        let keybindings = cfg
+        let keybindings = self
+            .cfg
+            .chewing_tsf
             .keybind
             .iter()
             .filter_map(|kb| Keybinding::try_from(kb).ok())

@@ -66,6 +66,8 @@ pub struct ChewingTsfConfig {
     /// Simplified output also swaps Taiwanese terms for mainland ones (軟體→软件)
     /// instead of converting the script only (軟體→软体).
     pub output_simp_vocabulary: bool,
+    /// Typing Hanyu pinyin instead of zhuyin.
+    pub pinyin: bool,
     pub sel_key_type: i32,
     pub conv_engine: i32,
     pub cand_per_row: i32,
@@ -113,6 +115,7 @@ impl Default for ChewingTsfConfig {
             default_english: false,
             output_simp_chinese: false,
             output_simp_vocabulary: false,
+            pinyin: false,
             sel_key_type: 0,
             conv_engine: 1,
             cand_per_row: 3,
@@ -140,6 +143,11 @@ impl Default for ChewingTsfConfig {
                 KeybindValue {
                     key: "Ctrl+Delete".to_string(),
                     action: "selecting_unlearn_phrase".to_string(),
+                    param: "".to_string(),
+                },
+                KeybindValue {
+                    key: "Ctrl+F11".to_string(),
+                    action: "toggle_pinyin".to_string(),
                     param: "".to_string(),
                 },
             ],
@@ -211,6 +219,9 @@ impl Config {
             }
             if let Ok(value) = reg_get_bool(&key, "OutputSimpVocabulary") {
                 cfg.output_simp_vocabulary = value;
+            }
+            if let Ok(value) = reg_get_bool(&key, "Pinyin") {
+                cfg.pinyin = value;
             }
             if let Ok(value) = reg_get_bool(&key, "AddPhraseForward") {
                 cfg.add_phrase_forward = value;
@@ -300,10 +311,15 @@ impl Config {
                 cfg.modified_timestamp = value;
             }
             if let Ok(values) = key.get_multi_string("Keybind") {
-                cfg.keybind = values
+                let saved: Vec<KeybindValue> = values
                     .into_iter()
                     .flat_map(|value| KeybindValue::from_str(&value))
                     .collect();
+                // Every save writes the whole list, so a saved one lacks the
+                // actions added since; those keep their default keys.
+                cfg.keybind
+                    .retain(|default| saved.iter().all(|kb| kb.action != default.action));
+                cfg.keybind.splice(0..0, saved);
             }
 
             Ok(Config {
@@ -375,6 +391,7 @@ impl Config {
             "OutputSimpVocabulary",
             chewing_tsf.output_simp_vocabulary,
         );
+        let _ = reg_set_bool(&key, "Pinyin", chewing_tsf.pinyin);
         let _ = reg_set_bool(&key, "AddPhraseForward", chewing_tsf.add_phrase_forward);
         let _ = reg_set_bool(
             &key,

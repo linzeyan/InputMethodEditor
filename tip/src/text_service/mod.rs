@@ -34,6 +34,7 @@ mod icons;
 mod key_event;
 mod lang_bar;
 mod menu;
+mod pinyin;
 mod resources;
 mod theme;
 mod ui_elements;
