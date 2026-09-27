@@ -177,6 +177,9 @@ pub(super) struct ChewingTextService {
     chewing_editor: Editor,
     notification: Option<ComObject<Notification>>,
     candidate_list: Option<ComObject<CandidateList>>,
+    /// For each slot in the candidate list, the editor's index on the current
+    /// page. They differ once converted duplicates are hidden.
+    candidate_indices: Vec<usize>,
     composition: Rc<RefCell<Option<ITfComposition>>>,
     pending_edit: Weak<RefCell<Option<CompositionString>>>,
 }
@@ -295,6 +298,7 @@ impl ChewingTextService {
             ime_mode_button,
             notification: Default::default(),
             candidate_list: Default::default(),
+            candidate_indices: vec![],
             composition: Default::default(),
             pending_edit: Weak::new(),
             pending_lang_mode_change: Cell::new(false),
@@ -603,7 +607,12 @@ impl ChewingTextService {
             };
             // HACK: convert sel_keys key to number key
             if self.chewing_editor.is_selecting() {
-                evt = self.map_sel_key(evt);
+                let Some(mapped) = self.map_sel_key(evt) else {
+                    // Nothing is shown in that slot; chewing would pick the
+                    // hidden duplicate there.
+                    return Ok(true);
+                };
+                evt = mapped;
             }
             if evt.ksym == SYM_SPACE && evt.is_state_on(KeyState::Shift) {
                 // TODO: maybe this can be merged back to the default branch?
@@ -625,8 +634,11 @@ impl ChewingTextService {
             {
                 match candidate_list.filter_key_event(evt.ksym) {
                     FilterKeyResult::HandledCommit => {
-                        let sel_key = candidate_list.current_sel();
-                        self.chewing_editor.select(sel_key)?;
+                        if let Some(&index) =
+                            self.candidate_indices.get(candidate_list.current_sel())
+                        {
+                            self.chewing_editor.select(index)?;
+                        }
                         key_handled = true;
                     }
                     FilterKeyResult::Handled => {
@@ -646,10 +658,12 @@ impl ChewingTextService {
                                 // needs the phrase as the dictionary stores it.
                                 if self.cfg.chewing_tsf.cursor_cand_list
                                     && let Some(candidate_list) = &self.candidate_list
+                                    && let Some(&index) =
+                                        self.candidate_indices.get(candidate_list.current_sel())
                                     && let Some(phrase) = self
                                         .chewing_editor
                                         .paginated_candidates()?
-                                        .get(candidate_list.current_sel())
+                                        .get(index)
                                         .cloned()
                                 {
                                     let phrase_len = phrase.chars().count();
@@ -1206,8 +1220,11 @@ impl ChewingTextService {
                     return Ok(());
                 }
                 items.truncate(n);
+                let (items, indices) =
+                    dedup_candidates(items.iter().map(|it| convert_output(cfg, it)));
+                self.candidate_indices = indices;
                 candidate_list.set_model(Model {
-                    items: items.iter().map(|it| convert_output(cfg, it)).collect(),
+                    items,
                     selkeys: sel_keys.chars().take(n).map(|k| k as u16).collect(),
                     cand_per_row: cfg.cand_per_row as u32,
                     total_page,
@@ -1509,23 +1526,29 @@ impl ChewingTextService {
         Ok(())
     }
 
-    fn map_sel_key(&self, mut evt: KeyboardEvent) -> KeyboardEvent {
-        if let Some(idx) = SEL_KEYS[self.cfg.chewing_tsf.sel_key_type as usize]
+    /// Maps a selection key to the digit chewing selects with. Plain digits
+    /// count as slots too, since chewing would otherwise select by them
+    /// directly. `None` means nothing is shown in that slot.
+    fn map_sel_key(&self, mut evt: KeyboardEvent) -> Option<KeyboardEvent> {
+        let key = evt.ksym.to_unicode();
+        let slot = SEL_KEYS[self.cfg.chewing_tsf.sel_key_type as usize]
             .chars()
-            .position(|it| it == evt.ksym.to_unicode())
-        {
-            match idx {
-                0..9 => {
-                    evt.code = Keycode(keycode::KEY_1.0 + idx as u8);
-                    evt.ksym = Keysym(keysym::SYM_1.0 + idx as u32);
-                }
-                _ => {
-                    evt.code = keycode::KEY_0;
-                    evt.ksym = keysym::SYM_0;
-                }
-            }
+            .position(|it| it == key)
+            .or_else(|| key.to_digit(10).map(|digit| (digit as usize + 9) % 10));
+        let Some(slot) = slot else {
+            return Some(evt);
         };
-        evt
+        match *self.candidate_indices.get(slot)? {
+            idx @ 0..9 => {
+                evt.code = Keycode(keycode::KEY_1.0 + idx as u8);
+                evt.ksym = Keysym(keysym::SYM_1.0 + idx as u32);
+            }
+            _ => {
+                evt.code = keycode::KEY_0;
+                evt.ksym = keysym::SYM_0;
+            }
+        }
+        Some(evt)
     }
 }
 
@@ -1630,6 +1653,21 @@ fn convert_preedit(cfg: &ChewingTsfConfig, text: &str) -> String {
     }
 }
 
+/// Converting can map several candidates to the same text (體 and 体 both
+/// become 体). Keeps the first, higher ranked, of each and returns the editor
+/// index every shown item stands for.
+fn dedup_candidates(items: impl IntoIterator<Item = String>) -> (Vec<String>, Vec<usize>) {
+    let mut shown: Vec<String> = vec![];
+    let mut indices = vec![];
+    for (index, item) in items.into_iter().enumerate() {
+        if !shown.contains(&item) {
+            shown.push(item);
+            indices.push(index);
+        }
+    }
+    (shown, indices)
+}
+
 fn syl_editor_from_kbtype(kbtype: KeyboardLayoutCompat) -> Box<dyn SyllableEditor> {
     use zhuyin_layout::*;
     match kbtype {
@@ -1663,5 +1701,38 @@ fn keymap_from_kbtype(kbtype: KeyboardLayoutCompat) -> KeymapOp {
         KeyboardLayoutCompat::Workman => KeymapOp::Ksym(&INVERTED_WORKMAN_MAP),
         KeyboardLayoutCompat::Colemak => KeymapOp::Ksym(&INVERTED_COLEMAK_MAP),
         _ => KeymapOp::None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chewing_tip_core::config::ChewingTsfConfig;
+
+    use super::{convert_output, convert_preedit, dedup_candidates};
+
+    fn simplified(vocabulary: bool) -> ChewingTsfConfig {
+        ChewingTsfConfig {
+            output_simp_chinese: true,
+            output_simp_vocabulary: vocabulary,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn selecting_a_slot_skips_hidden_duplicates() {
+        let cfg = simplified(false);
+        let (shown, indices) =
+            dedup_candidates(["體", "体", "綈"].map(|it| convert_output(&cfg, it)));
+        assert_eq!(shown, ["体", "绨"]);
+        // The second slot shows 绨, so it must select 綈, not the hidden 体.
+        assert_eq!(indices, [0, 2]);
+    }
+
+    #[test]
+    fn preedit_keeps_its_length_for_segment_offsets() {
+        let cfg = simplified(true);
+        assert_eq!(convert_output(&cfg, "網際網路"), "互联网");
+        assert_eq!(convert_preedit(&cfg, "網際網路"), "网际网路");
+        assert_eq!(convert_preedit(&cfg, "軟體"), "软件");
     }
 }
