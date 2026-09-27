@@ -7,6 +7,7 @@ use std::mem;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
 use std::rc::{Rc, Weak};
+use std::sync::Once;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
@@ -25,7 +26,7 @@ use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::Syllable;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::shell::{open_url, user_dir};
+use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use log::{debug, error, info};
 use scoped_error::impl_context_error;
 use scoped_error::{ErrorExt, expect_error};
@@ -1616,6 +1617,15 @@ impl<'a> ReentrantOps<'a> {
 fn new_editor() -> Result<Editor> {
     let dictionary_dir = dictionary_dir()?;
     let user_dir = user_dir()?;
+    // Done here rather than by tsfreg, whose elevated %AppData% may belong to
+    // another account. Once per process: the editor is rebuilt on every focus.
+    static SHARE_USER_DIR: Once = Once::new();
+    SHARE_USER_DIR.call_once(|| {
+        // Always fails inside an AppContainer; the next desktop app sets it up.
+        if let Err(error) = share_user_dir(&user_dir) {
+            info!("{}", error.report());
+        }
+    });
     Ok(Editor::chewing(
         Some(dictionary_dir.to_string_lossy().into_owned()),
         Some(user_dir.to_string_lossy().into_owned()),
