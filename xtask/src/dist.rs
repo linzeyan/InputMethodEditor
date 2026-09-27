@@ -46,6 +46,9 @@ fn elevated_bat(verb: &str) -> String {
 
 pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
     expect_error("Failed to build the portable package", || {
+        if flags.msi && flags.arm64 {
+            Err("wixl can't build an ARM64 MSI")?;
+        }
         let sh = Shell::new()?;
 
         let release = flags.release.then_some("--release");
@@ -128,6 +131,16 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
         let zip_path = dir.with_extension("zip");
         zip_dir(&dir, &zip_path)?;
         eprintln!("Wrote {}", zip_path.display());
+
+        if flags.msi {
+            let wxs = sh.current_dir().join("installer/InputMethodEditor.wxs");
+            let msi = sh.current_dir().join(dir.with_extension("msi"));
+            let version = env!("CARGO_PKG_VERSION");
+            // The .wxs names its files relative to the package folder.
+            let _package = sh.push_dir(&dir);
+            cmd!(sh, "wixl -a x64 -D Version={version} -o {msi} {wxs}").run()?;
+            eprintln!("Wrote {}", msi.display());
+        }
         Ok(())
     })
 }

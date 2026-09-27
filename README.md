@@ -15,6 +15,19 @@ Windows 10／11 x64。在 ARM64 版 Windows 上只能用於 x64／x86 程式。
 
 ## 安裝
 
+兩種方式擇一，都需要一次系統管理員權限。
+
+### 安裝程式
+
+執行 `InputMethodEditor.msi`，在 UAC 視窗按「是」。它會裝到
+`C:\Program Files\InputMethodEditor`，並把輸入法加到你的語言清單；
+已開啟的程式要重新開啟才能使用。
+
+更新時直接執行新版的 `.msi`。若出現「下列應用程式應該被關閉」，按「略過」即可，
+之後開啟的程式就會用新版。
+
+### 免安裝
+
 1. 把 `InputMethodEditor.zip` 解壓到固定的位置，建議
    `C:\Program Files\InputMethodEditor`（原因見下方〈安全性〉）。
    註冊後不要搬移或刪除這個資料夾。
@@ -41,7 +54,8 @@ Windows 只從 HKLM 讀取輸入法的 COM 註冊，所以註冊需要一次系�
 
 ## 移除
 
-先執行 `unregister.bat`，再刪除資料夾。使用者詞庫與設定不會被刪除，
+用安裝程式裝的，在「設定 → 應用程式 → 已安裝的應用程式」移除 InputMethodEditor。
+免安裝版先執行 `unregister.bat`，再刪除資料夾。兩者都不會刪除使用者詞庫與設定，
 分別在 `%AppData%\InputMethodEditor` 與 `HKEY_CURRENT_USER\Software\InputMethodEditor`，
 不需要時請手動刪除。
 

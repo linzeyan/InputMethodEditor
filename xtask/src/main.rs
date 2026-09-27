@@ -36,6 +36,8 @@ mod flags {
                 optional --nightly
                 /// Build for ARM64 Windows instead of x64 (x64 apps there can't use it)
                 optional --arm64
+                /// Also build an x64 MSI installer with wixl (msitools)
+                optional --msi
             }
         }
     }
@@ -67,6 +69,7 @@ mod flags {
         pub release: bool,
         pub nightly: bool,
         pub arm64: bool,
+        pub msi: bool,
     }
 
     impl Xtask {

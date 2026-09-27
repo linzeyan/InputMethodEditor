@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Built by wixl (msitools) from dist/InputMethodEditor; see xtask/src/dist.rs. -->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*" Name="InputMethodEditor" Language="1028" Version="$(var.Version)"
+           Manufacturer="linzeyan" UpgradeCode="86DCBFAA-B41C-4A74-825B-ACD6C8D77FBC">
+    <Package InstallerVersion="500" Compressed="yes" InstallScope="perMachine" />
+    <MajorUpgrade DowngradeErrorMessage="A newer version of InputMethodEditor is already installed." />
+    <Media Id="1" Cabinet="ime.cab" EmbedCab="yes" />
+    <Icon Id="ime.ico" SourceFile="InputMethodEditor.ico" />
+    <Property Id="ARPPRODUCTICON" Value="ime.ico" />
+    <!-- Every running program has the DLL loaded, and the Restart Manager's
+         dialog defaults to closing them all. The plain files-in-use dialog
+         offers Ignore instead, which moves the loaded DLL aside so programs
+         started afterwards get the new one. -->
+    <Property Id="MSIRESTARTMANAGERCONTROL" Value="Disable" />
+    <!-- An upgrade removes the old product after costing the new one, so a
+         DLL whose file version didn't change was judged present and then
+         removed with the old product. Always install our (private) files. -->
+    <Property Id="REINSTALLMODE" Value="amus" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <!-- Only administrators can replace the DLL elevated programs load. -->
+        <Directory Id="INSTALLDIR" Name="InputMethodEditor">
+          <Component Id="Main" Guid="*" Win64="yes">
+            <File Id="tsfreg" Source="tsfreg.exe" KeyPath="yes" />
+            <File Id="icon" Source="InputMethodEditor.ico" />
+            <File Id="license" Source="COPYING.txt" />
+          </Component>
+          <Directory Id="X64Dir" Name="x64">
+            <Component Id="X64" Guid="*" Win64="yes">
+              <File Id="x64dll" Source="x64/chewing_tip.dll" KeyPath="yes" />
+            </Component>
+          </Directory>
+          <Directory Id="X86Dir" Name="x86">
+            <Component Id="X86" Guid="*" Win64="yes">
+              <File Id="x86dll" Source="x86/chewing_tip.dll" KeyPath="yes" />
+            </Component>
+          </Directory>
+          <Directory Id="DictionaryDir" Name="Dictionary">
+            <Component Id="Dictionary" Guid="*" Win64="yes">
+              <File Id="static_dict" Source="Dictionary/static_dict.bin" KeyPath="yes" />
+              <File Id="static_lm" Source="Dictionary/static_lm.bin" />
+              <File Id="static_words" Source="Dictionary/static_words.bin" />
+              <File Id="rare_dict" Source="Dictionary/rare_dict.bin" />
+              <File Id="swkb" Source="Dictionary/swkb.dat" />
+              <File Id="symbols" Source="Dictionary/symbols.dat" />
+            </Component>
+          </Directory>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="Complete" Level="1">
+      <ComponentRef Id="Main" />
+      <ComponentRef Id="X64" />
+      <ComponentRef Id="X86" />
+      <ComponentRef Id="Dictionary" />
+    </Feature>
+
+    <!-- Not named after standard actions: a custom action called RegisterUser
+         is silently replaced by Windows Installer's own. -->
+    <!-- HKLM, as SYSTEM. -->
+    <CustomAction Id="RegisterTip" FileKey="tsfreg" ExeCommand="msi-register"
+                  Execute="deferred" Impersonate="no" Return="check" />
+    <!-- The language list and settings key of the user who installs, once the
+         install is committed: failing here loses only the list entry, which
+         the user can still add in Settings. -->
+    <CustomAction Id="RegisterTipForUser" FileKey="tsfreg" ExeCommand="msi-register-user"
+                  Execute="immediate" Return="check" />
+    <!-- Best effort, like unregister.bat: a failure must not block removal. -->
+    <CustomAction Id="UnregisterTip" FileKey="tsfreg" ExeCommand="msi-unregister"
+                  Execute="deferred" Impersonate="no" Return="ignore" />
+    <InstallExecuteSequence>
+      <!-- Numbers rather than Before/After, which wixl 0.106 mishandles:
+           just before RemoveFiles (3500) and just after InstallFinalize (6600). -->
+      <Custom Action="UnregisterTip" Sequence="3499">REMOVE="ALL"</Custom>
+      <Custom Action="RegisterTip" After="InstallFiles">NOT REMOVE</Custom>
+      <Custom Action="RegisterTipForUser" Sequence="6601">NOT REMOVE</Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

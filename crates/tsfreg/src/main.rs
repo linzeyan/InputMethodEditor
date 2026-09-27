@@ -47,6 +47,7 @@ const CATEGORIES: [GUID; 7] = [
 ];
 
 type Outcome = std::result::Result<Option<&'static str>, Box<dyn Error>>;
+type Step = std::result::Result<(), Box<dyn Error>>;
 
 fn zh_tw_langid() -> u16 {
     let lcid = unsafe { LocaleNameToLCID(w!("zh-TW"), 0) };
@@ -114,6 +115,19 @@ fn register(root: &Path) -> Outcome {
         }
     }
 
+    register_machine(root)?;
+    register_user()?;
+    Ok(Some(
+        "註冊完成。已開啟的程式要重新開啟後才能使用這個輸入法。",
+    ))
+}
+
+/// The part that needs administrator rights; the MSI runs it as SYSTEM.
+fn register_machine(root: &Path) -> Step {
+    let native_dll = root.join(NATIVE_DIR).join("chewing_tip.dll");
+    let x86_dll = root.join("x86").join("chewing_tip.dll");
+    let icon = root.join(format!("{PRODUCT_NAME}.ico"));
+
     // Both views: 32-bit apps load the x86 DLL through the WOW64 registry.
     register_com_server(KEY_WOW64_64KEY, &native_dll)?;
     register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
@@ -151,6 +165,17 @@ fn register(root: &Path) -> Outcome {
         (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0,
     )?;
 
+    #[cfg(feature = "nightly")]
+    {
+        // Enable user-mode minidump for debug build
+        let _ = LOCAL_MACHINE
+            .create("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps");
+    }
+    Ok(())
+}
+
+/// The part for the user who installs; the MSI runs it as that user.
+fn register_user() -> Step {
     // The DLL only reads settings, so the key must exist and be readable from
     // AppContainer processes before any setting is written.
     CURRENT_USER.create(format!(r"Software\{PRODUCT_NAME}"))?;
@@ -160,16 +185,7 @@ fn register(root: &Path) -> Outcome {
     unsafe {
         InstallLayoutOrTip(CHEWING_TIP_DESC.as_ptr(), ILOT_INSTALL);
     }
-
-    #[cfg(feature = "nightly")]
-    {
-        // Enable user-mode minidump for debug build
-        let _ = LOCAL_MACHINE
-            .create("SOFTWARE\\Microsoft\\Windows\\Windows Error Reporting\\LocalDumps");
-    }
-    Ok(Some(
-        "註冊完成。已開啟的程式要重新開啟後才能使用這個輸入法。",
-    ))
+    Ok(())
 }
 
 /// Best effort: keeps going after a failed step so a half-registered state
@@ -261,21 +277,45 @@ fn message_box(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
     }
 }
 
-fn run() -> Outcome {
+/// Returns the IME folder, which is where tsfreg itself is.
+fn init() -> std::result::Result<PathBuf, Box<dyn Error>> {
     unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED).ok()? };
-    let root: PathBuf = env::current_exe()?
+    Ok(env::current_exe()?
         .parent()
         .ok_or("無法判斷輸入法資料夾")?
-        .to_path_buf();
-    match env::args().nth(1).as_deref() {
+        .to_path_buf())
+}
+
+fn run(verb: Option<&str>) -> Outcome {
+    let root = init()?;
+    match verb {
         Some("register") => register(&root),
         Some("unregister") => unregister(),
         _ => Err("用法：tsfreg register | tsfreg unregister".into()),
     }
 }
 
+/// Steps of the MSI, which has already asked for elevation and shows its own
+/// errors. No message box: as SYSTEM it would hang the install out of sight.
+fn run_msi_step(step: &str) -> Step {
+    let root = init()?;
+    match step {
+        "register" => register_machine(&root),
+        "register-user" => register_user(),
+        "unregister" => unregister().map(drop),
+        _ => Err(format!("unknown MSI step: {step}").into()),
+    }
+}
+
 fn main() -> ExitCode {
-    match run() {
+    let verb = env::args().nth(1);
+    if let Some(step) = verb.as_deref().and_then(|verb| verb.strip_prefix("msi-")) {
+        return match run_msi_step(step) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
+    match run(verb.as_deref()) {
         Ok(Some(done)) => {
             message_box(done, MB_OK | MB_ICONINFORMATION);
             ExitCode::SUCCESS
