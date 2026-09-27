@@ -169,7 +169,6 @@ pub(super) struct ChewingTextService {
     pending_lang_mode_change: Cell<bool>,
 
     has_focus: bool,
-    output_simp_chinese: bool,
     shift_key_state: ShiftKeyState,
     cfg: Config,
     kbtype: KeyboardLayoutCompat,
@@ -284,7 +283,6 @@ impl ChewingTextService {
             lang_icons: LangIconSet::load(),
             lang_mode: Cell::new(TsfLangMode::English),
             has_focus: true,
-            output_simp_chinese: Default::default(),
             shift_key_state: ShiftKeyState::Up,
             cfg,
             kbtype: KeyboardLayoutCompat::Default,
@@ -534,6 +532,20 @@ impl ChewingTextService {
             match keybinding.action.as_str() {
                 "toggle_simplified_chinese" => {
                     self.toggle_simp_chinese()?;
+                    // Re-render now so the text being composed switches script
+                    // without waiting for the next key.
+                    if self.is_composing() {
+                        self.update_candidates(context)?;
+                        self.update_preedit(context, String::new())?;
+                    }
+                    if self.cfg.chewing_tsf.show_notification {
+                        let msg = if self.cfg.chewing_tsf.output_simp_chinese {
+                            "簡體中文"
+                        } else {
+                            "正體中文"
+                        };
+                        self.show_message(context, &msg.into(), Duration::from_millis(500))?;
+                    }
                 }
                 "toggle_hsu_keyboard" => {
                     self.toggle_hsu_keyboard(context)?;
@@ -630,10 +642,16 @@ impl ChewingTextService {
                     match keybinding.action.as_str() {
                         "selecting_unlearn_phrase" => {
                             if self.chewing_editor.is_selecting() {
+                                // The list may show converted text; unlearning
+                                // needs the phrase as the dictionary stores it.
                                 if self.cfg.chewing_tsf.cursor_cand_list
                                     && let Some(candidate_list) = &self.candidate_list
+                                    && let Some(phrase) = self
+                                        .chewing_editor
+                                        .paginated_candidates()?
+                                        .get(candidate_list.current_sel())
+                                        .cloned()
                                 {
-                                    let phrase = candidate_list.current_phrase();
                                     let phrase_len = phrase.chars().count();
                                     // TODO: expose begin and end from selector
                                     let cursor = if self.cfg.chewing_tsf.phrase_choice_rearward {
@@ -657,9 +675,10 @@ impl ChewingTextService {
                                         }
                                         self.update_candidates(context)?;
                                         // TODO: move this to editor
+                                        let shown = convert_output(&self.cfg.chewing_tsf, &phrase);
                                         self.show_message(
                                             context,
-                                            &format!("刪除：{phrase}").into(),
+                                            &format!("刪除：{shown}").into(),
                                             Duration::from_millis(500),
                                         )?;
                                         key_handled = true;
@@ -958,6 +977,11 @@ impl ChewingTextService {
                         error!("unable to toggle simplified chinese: {error}");
                     }
                 }
+                ID_OUTPUT_SIMP_VOCABULARY => {
+                    if let Err(error) = self.toggle_simp_vocabulary() {
+                        error!("unable to toggle simplified vocabulary: {error}");
+                    }
+                }
                 ID_MOEDICT => open_url("https://www.moedict.tw/"),
                 ID_DICT => open_url("https://dict.revised.moe.edu.tw/"),
                 ID_SIMPDICT => open_url("https://dict.concised.moe.edu.tw/"),
@@ -1031,7 +1055,8 @@ impl ChewingTextService {
 
     fn insert_text(&self, context: &ITfContext, text: &str) -> Result<()> {
         debug!(text; "going to request immediate text insertion");
-        let htext = text.into();
+        let text = convert_output(&self.cfg.chewing_tsf, text);
+        let htext = text.as_str().into();
         let session = InsertText::new(context.clone(), htext).into_object();
         request_edit_session(
             context,
@@ -1065,16 +1090,8 @@ impl ChewingTextService {
         cursor: usize,
     ) -> Result<()> {
         debug!(commit, preedit; "set composition string");
-        let commit = if self.output_simp_chinese {
-            zhconv(commit, Variant::ZhHans).into()
-        } else {
-            commit.into()
-        };
-        let preedit = if self.output_simp_chinese {
-            zhconv(preedit, Variant::ZhHans).into()
-        } else {
-            preedit.into()
-        };
+        let commit = convert_output(&self.cfg.chewing_tsf, commit);
+        let preedit = convert_preedit(&self.cfg.chewing_tsf, preedit);
         if let Some(cell) = self.pending_edit.upgrade() {
             debug!(cursor, preedit:%; "Reuse existing edit session");
             cell.replace(Some(CompositionString {
@@ -1190,7 +1207,7 @@ impl ChewingTextService {
                 }
                 items.truncate(n);
                 candidate_list.set_model(Model {
-                    items,
+                    items: items.iter().map(|it| convert_output(cfg, it)).collect(),
                     selkeys: sel_keys.chars().take(n).map(|k| k as u16).collect(),
                     cand_per_row: cfg.cand_per_row as u32,
                     total_page,
@@ -1226,22 +1243,24 @@ impl ChewingTextService {
         }
     }
 
+    /// Saved to the registry so every app shares one switch: the others pick it
+    /// up when they next get focus.
     fn toggle_simp_chinese(&mut self) -> Result<()> {
-        self.output_simp_chinese = !self.output_simp_chinese;
+        let cfg = &mut self.cfg.chewing_tsf;
+        cfg.output_simp_chinese = !cfg.output_simp_chinese;
         debug!(
             "toggle output simplified chinese: {}",
-            self.output_simp_chinese
+            cfg.output_simp_chinese
         );
-        let check_flag = if self.output_simp_chinese {
-            MF_CHECKED
-        } else {
-            MF_UNCHECKED
-        };
-        unsafe {
-            CheckMenuItem(self.popup_menu, ID_OUTPUT_SIMP_CHINESE, check_flag.0);
-        }
-        self.update_lang_buttons()?;
-        Ok(())
+        self.cfg.save_reg();
+        self.update_lang_buttons()
+    }
+
+    fn toggle_simp_vocabulary(&mut self) -> Result<()> {
+        let cfg = &mut self.cfg.chewing_tsf;
+        cfg.output_simp_vocabulary = !cfg.output_simp_vocabulary;
+        self.cfg.save_reg();
+        self.update_lang_buttons()
     }
 
     fn toggle_shape_mode(&mut self) -> Result<()> {
@@ -1356,7 +1375,10 @@ impl ChewingTextService {
     }
 
     fn get_lang_icon(&self) -> HICON {
-        let icons = match (self.lang_mode.get(), self.output_simp_chinese) {
+        let icons = match (
+            self.lang_mode.get(),
+            self.cfg.chewing_tsf.output_simp_chinese,
+        ) {
             (TsfLangMode::Chinese, true) => self.lang_icons.sc,
             (TsfLangMode::Chinese, false) => self.lang_icons.tc,
             _ => self.lang_icons.en,
@@ -1420,16 +1442,6 @@ impl ChewingTextService {
 
     /// Initializes the config to the user default
     fn apply_init_config(&mut self) -> Result<()> {
-        let cfg = &self.cfg.chewing_tsf;
-        self.output_simp_chinese = cfg.output_simp_chinese;
-        let check_flag = if self.output_simp_chinese {
-            MF_CHECKED
-        } else {
-            MF_UNCHECKED
-        };
-        unsafe {
-            CheckMenuItem(self.popup_menu, ID_OUTPUT_SIMP_CHINESE, check_flag.0);
-        }
         self.chewing_editor.set_editor_options(|opt| {
             if self.cfg.chewing_tsf.default_full_space {
                 opt.character_form = CharacterForm::Fullwidth;
@@ -1483,16 +1495,16 @@ impl ChewingTextService {
         };
         self.switch_shape_button.set_icon(icon)?;
 
-        unsafe {
-            CheckMenuItem(
-                self.popup_menu,
-                ID_SWITCH_SHAPE,
-                if shape_mode == CharacterForm::Fullwidth {
-                    MF_CHECKED.0
-                } else {
-                    MF_UNCHECKED.0
-                },
-            );
+        let cfg = &self.cfg.chewing_tsf;
+        for (id, checked) in [
+            (ID_SWITCH_SHAPE, shape_mode == CharacterForm::Fullwidth),
+            (ID_OUTPUT_SIMP_CHINESE, cfg.output_simp_chinese),
+            (ID_OUTPUT_SIMP_VOCABULARY, cfg.output_simp_vocabulary),
+        ] {
+            let flag = if checked { MF_CHECKED } else { MF_UNCHECKED };
+            unsafe {
+                CheckMenuItem(self.popup_menu, id, flag.0);
+            }
         }
         Ok(())
     }
@@ -1595,6 +1607,27 @@ fn dictionary_dir() -> Result<PathBuf> {
         .and_then(Path::parent)
         .context("chewing_tip.dll is not inside an architecture folder")?;
     Ok(root.join("Dictionary"))
+}
+
+/// Converts text leaving the IME: candidates, the composition and commits.
+fn convert_output(cfg: &ChewingTsfConfig, text: &str) -> String {
+    match (cfg.output_simp_chinese, cfg.output_simp_vocabulary) {
+        (false, _) => text.to_owned(),
+        (true, false) => zhconv(text, Variant::ZhHans),
+        (true, true) => zhconv(text, Variant::ZhCN),
+    }
+}
+
+/// Segments and the cursor are character offsets into the unconverted text,
+/// so a vocabulary swap that changes the length only gets the script
+/// conversion while composing; the commit still gets the full one.
+fn convert_preedit(cfg: &ChewingTsfConfig, text: &str) -> String {
+    let converted = convert_output(cfg, text);
+    if converted.chars().count() == text.chars().count() {
+        converted
+    } else {
+        zhconv(text, Variant::ZhHans)
+    }
 }
 
 fn syl_editor_from_kbtype(kbtype: KeyboardLayoutCompat) -> Box<dyn SyllableEditor> {

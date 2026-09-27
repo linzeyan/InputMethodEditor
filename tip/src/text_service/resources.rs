@@ -19,6 +19,7 @@ pub(super) const ID_SWITCH_LANG: u32 = 101;
 pub(super) const ID_SWITCH_SHAPE: u32 = 102;
 pub(super) const ID_MODE_ICON: u32 = 103;
 pub(super) const ID_OUTPUT_SIMP_CHINESE: u32 = 40027;
+pub(super) const ID_OUTPUT_SIMP_VOCABULARY: u32 = 40028;
 pub(super) const ID_MOEDICT: u32 = 40025;
 pub(super) const ID_DICT: u32 = 40011;
 pub(super) const ID_SIMPDICT: u32 = 40012;

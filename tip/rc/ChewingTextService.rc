@@ -125,6 +125,7 @@ BEGIN
         END
         MENUITEM "輸出全形英數字母 (&F)",             ID_SWITCH_SHAPE
         MENUITEM "輸出簡體中文 (&S)",                 ID_OUTPUT_SIMP_CHINESE
+        MENUITEM "簡體改用大陸用語，如 軟體→软件 (&V)",   ID_OUTPUT_SIMP_VOCABULARY
     END
 END
 

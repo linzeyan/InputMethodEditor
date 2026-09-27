@@ -645,10 +645,6 @@ impl CandidateList {
     pub(crate) fn current_sel(&self) -> usize {
         self.inner.model.borrow().current_sel
     }
-    pub(crate) fn current_phrase(&self) -> String {
-        let sel = self.current_sel();
-        self.inner.model.borrow().items[sel].clone()
-    }
     pub(crate) fn set_position(&self, x: i32, y: i32) {
         let view = self.inner.view.borrow();
         if let Some(window) = view.window() {

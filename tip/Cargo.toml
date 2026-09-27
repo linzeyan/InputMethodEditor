@@ -48,7 +48,9 @@ windows = { version = "0.62.2", features = [
 windows-core = "0.62.2"
 windows-numerics = "0.3.1"
 windows-registry = "0.6.1"
-zhconv = { version = "0.4.1", default-features = false, features = ["opencc"] }
+# Default features bring MediaWiki's tables (GPL-2.0-or-later): OpenCC alone
+# leaves 乾燥 unconverted and has no zh-CN vocabulary (軟體→软件).
+zhconv = "0.4.1"
 
 [build-dependencies]
 anyhow = "1.0.95"

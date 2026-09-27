@@ -63,6 +63,9 @@ pub struct ChewingTsfConfig {
     pub default_full_space: bool,
     pub default_english: bool,
     pub output_simp_chinese: bool,
+    /// Simplified output also swaps Taiwanese terms for mainland ones (軟體→软件)
+    /// instead of converting the script only (軟體→软体).
+    pub output_simp_vocabulary: bool,
     pub sel_key_type: i32,
     pub conv_engine: i32,
     pub cand_per_row: i32,
@@ -109,6 +112,7 @@ impl Default for ChewingTsfConfig {
             default_full_space: false,
             default_english: false,
             output_simp_chinese: false,
+            output_simp_vocabulary: false,
             sel_key_type: 0,
             conv_engine: 1,
             cand_per_row: 3,
@@ -204,6 +208,9 @@ impl Config {
             }
             if let Ok(value) = reg_get_bool(&key, "OutputSimpChinese") {
                 cfg.output_simp_chinese = value;
+            }
+            if let Ok(value) = reg_get_bool(&key, "OutputSimpVocabulary") {
+                cfg.output_simp_vocabulary = value;
             }
             if let Ok(value) = reg_get_bool(&key, "AddPhraseForward") {
                 cfg.add_phrase_forward = value;
@@ -306,7 +313,14 @@ impl Config {
             })
         })
     }
-    pub fn save_reg(&self) {
+    pub fn save_reg(&mut self) {
+        // Kept in memory as well, so this process's next reload_if_needed finds
+        // nothing changed and doesn't rebuild the editor mid-composition.
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.chewing_tsf.modified_timestamp = timestamp;
         let chewing_tsf = &self.chewing_tsf;
 
         let Ok(key) = CURRENT_USER
@@ -356,6 +370,11 @@ impl Config {
         );
         let _ = reg_set_bool(&key, "ShowNotification", chewing_tsf.show_notification);
         let _ = reg_set_bool(&key, "OutputSimpChinese", chewing_tsf.output_simp_chinese);
+        let _ = reg_set_bool(
+            &key,
+            "OutputSimpVocabulary",
+            chewing_tsf.output_simp_vocabulary,
+        );
         let _ = reg_set_bool(&key, "AddPhraseForward", chewing_tsf.add_phrase_forward);
         let _ = reg_set_bool(
             &key,
@@ -429,13 +448,7 @@ impl Config {
                 .collect::<Vec<String>>()
                 .as_slice(),
         );
-        let _ = key.set_u64(
-            "ModifiedTimestamp",
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
-        );
+        let _ = key.set_u64("ModifiedTimestamp", timestamp);
 
         // AppContainer app, like the SearchHost.exe powering the start menu search bar
         // needs this to access the settings.
