@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use chewing::editor::zhuyin_layout::{self, KeyboardLayoutCompat, SyllableEditor};
+use chewing::editor::zhuyin_layout::{self, KeyBehavior, KeyboardLayoutCompat, SyllableEditor};
 use chewing::editor::{
     BasicEditor, CharacterForm, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
     UserPhraseAddDirection,
@@ -629,7 +629,7 @@ impl ChewingTextService {
                 self.chewing_editor.process_keyevent(evt);
                 self.chewing_editor
                     .set_editor_options(|opt| opt.language_mode = old_lang_mode);
-            } else {
+            } else if !change_tone(&mut self.chewing_editor, self.kbtype, evt) {
                 self.chewing_editor.process_keyevent(evt);
             }
         } else {
@@ -1722,11 +1722,116 @@ fn keymap_from_kbtype(kbtype: KeyboardLayoutCompat) -> KeymapOp {
     }
 }
 
+/// A tone key typed right after a character re-types that character with the
+/// new tone: 嗎 then ˇ gives 馬. Chewing would otherwise start a new syllable
+/// with the tone alone.
+fn change_tone(editor: &mut Editor, kbtype: KeyboardLayoutCompat, evt: KeyboardEvent) -> bool {
+    if evt.has_modifiers()
+        || editor.editor_options().language_mode != LanguageMode::Chinese
+        || !editor.is_entering()
+        || editor.entering_syllable()
+        || editor.cursor() == 0
+    {
+        return false;
+    }
+    let Some(old) = editor.symbols()[editor.cursor() - 1].to_syllable() else {
+        return false;
+    };
+    // Asking the layout keeps this right for every layout, including those
+    // where the tone keys also type consonants, such as Hsu.
+    let mut probe = syl_editor_from_kbtype(kbtype);
+    probe.key_press(evt);
+    let typed = probe.read();
+    let Some(tone) = typed.tone() else {
+        return false;
+    };
+    if typed.has_initial() || typed.has_medial() || typed.has_rime() {
+        return false;
+    }
+    let mut new = old;
+    new.update(tone);
+    let len = editor.len();
+    editor.process_keyevent(
+        KeyboardEvent::builder()
+            .code(keycode::KEY_BACKSPACE)
+            .ksym(keysym::SYM_BACKSPACE)
+            .build(),
+    );
+    insert_syllable(editor, kbtype, new);
+    // Chewing drops a syllable no word is spelled with; keep the old one then.
+    if editor.len() < len {
+        insert_syllable(editor, kbtype, old);
+    }
+    true
+}
+
+fn insert_syllable(editor: &mut Editor, kbtype: KeyboardLayoutCompat, syllable: Syllable) {
+    editor.set_syllable_editor(Box::new(PresetSyllable {
+        syllable,
+        started: false,
+    }));
+    let key = KeyboardEvent::builder()
+        .code(keycode::KEY_A)
+        .ksym(keysym::SYM_LOWER_A)
+        .build();
+    editor.process_keyevent(key);
+    editor.process_keyevent(key);
+    editor.set_syllable_editor(syl_editor_from_kbtype(kbtype));
+}
+
+/// Hands chewing one ready-made syllable, so a syllable can be put into the
+/// composition without knowing which keys type it in the current layout.
+/// Chewing starts a syllable when a key is absorbed and inserts it when a key
+/// commits, so the first key press absorbs and the second commits.
+#[derive(Debug, Clone, Copy)]
+struct PresetSyllable {
+    syllable: Syllable,
+    started: bool,
+}
+
+impl std::fmt::Display for PresetSyllable {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PresetSyllable")
+    }
+}
+
+impl SyllableEditor for PresetSyllable {
+    fn key_press(&mut self, _key: KeyboardEvent) -> KeyBehavior {
+        if mem::replace(&mut self.started, true) {
+            KeyBehavior::Commit
+        } else {
+            KeyBehavior::Absorb
+        }
+    }
+    fn remove_last(&mut self) {
+        self.syllable.pop();
+    }
+    fn clear(&mut self) {
+        self.syllable.clear();
+    }
+    fn is_empty(&self) -> bool {
+        self.syllable.is_empty()
+    }
+    fn read(&self) -> Syllable {
+        self.syllable
+    }
+    fn clone(&self) -> Box<dyn SyllableEditor> {
+        Box::new(*self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use chewing::dictionary::StringTableBuilder;
+    use chewing::editor::zhuyin_layout::KeyboardLayoutCompat;
+    use chewing::editor::{BasicEditor, EditorBuilder};
+    use chewing::input::keymap::{QWERTY_MAP, map_ascii};
+    use chewing::lm::StaticDictBuilder;
+    use chewing::syl;
+    use chewing::zhuyin::Bopomofo as bpmf;
     use chewing_tip_core::config::ChewingTsfConfig;
 
-    use super::{convert_output, convert_preedit, dedup_candidates};
+    use super::{change_tone, convert_output, convert_preedit, dedup_candidates};
 
     fn simplified(vocabulary: bool) -> ChewingTsfConfig {
         ChewingTsfConfig {
@@ -1752,5 +1857,54 @@ mod tests {
         assert_eq!(convert_output(&cfg, "網際網路"), "互联网");
         assert_eq!(convert_preedit(&cfg, "網際網路"), "网际网路");
         assert_eq!(convert_preedit(&cfg, "軟體"), "软件");
+    }
+
+    #[test]
+    fn tone_key_retypes_the_previous_character() {
+        let mut strings = StringTableBuilder::new();
+        strings.insert("嗎");
+        strings.insert("馬");
+        let strings = strings.build();
+        let mut dict = StaticDictBuilder::new();
+        dict.insert(
+            &[syl![bpmf::M, bpmf::A, bpmf::TONE5]],
+            strings.get_wid("嗎").unwrap(),
+        );
+        dict.insert(
+            &[syl![bpmf::M, bpmf::A, bpmf::TONE3]],
+            strings.get_wid("馬").unwrap(),
+        );
+        let mut editor = EditorBuilder::new()
+            .string_table(strings)
+            .static_dict(dict.build())
+            .build();
+        let key = |ascii| map_ascii(&QWERTY_MAP, ascii);
+        for ascii in *b"a87" {
+            editor.process_keyevent(key(ascii));
+        }
+        assert_eq!(editor.display(), "嗎");
+
+        assert!(change_tone(
+            &mut editor,
+            KeyboardLayoutCompat::Default,
+            key(b'3')
+        ));
+        assert_eq!(editor.display(), "馬");
+        // No word here is ㄇㄚˋ; losing the character would be worse than
+        // ignoring the key.
+        assert!(change_tone(
+            &mut editor,
+            KeyboardLayoutCompat::Default,
+            key(b'4')
+        ));
+        assert_eq!(editor.display(), "馬");
+        // D is ˊ in Hsu only after a rime; alone it starts ㄉ, so it must
+        // begin the next character.
+        assert!(!change_tone(
+            &mut editor,
+            KeyboardLayoutCompat::Hsu,
+            key(b'd')
+        ));
+        assert_eq!(editor.display(), "馬");
     }
 }
