@@ -40,7 +40,7 @@ use windows::Win32::{
         WindowsAndMessaging::{
             CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, RegisterClassExW,
             WINDOWPOS, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN,
-            WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -180,7 +180,8 @@ impl View {
                 parent,
                 w!("ChewingCandidateListWindow"),
                 WS_POPUP | WS_CLIPCHILDREN,
-                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                // Never take the focus from the window being typed into.
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                 user_data.into_raw().cast(),
             );
             unsafe {

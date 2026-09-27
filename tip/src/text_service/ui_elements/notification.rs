@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use log::error;
 use scoped_error::expect_error;
 use windows::Win32::{
-    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, TRUE, WPARAM},
+    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM},
     Graphics::{
         Direct2D::{
             Common::{D2D_RECT_F, D2D1_COLOR_F},
@@ -21,8 +21,8 @@ use windows::Win32::{
         DirectComposition::IDCompositionTarget,
         DirectWrite::{
             DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_TEXT_METRICS,
-            DWriteCreateFactory, IDWriteFactory1,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_MEASURING_MODE_NATURAL,
+            DWRITE_TEXT_METRICS, DWriteCreateFactory, IDWriteFactory1,
         },
         Dxgi::{
             Common::DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGISwapChain1,
@@ -32,10 +32,10 @@ use windows::Win32::{
     UI::{
         TextServices::{ITfThreadMgr, ITfUIElement, ITfUIElement_Impl, ITfUIElementMgr},
         WindowsAndMessaging::{
-            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, KillTimer, LoadCursorW,
-            RegisterClassExW, SetTimer, WINDOWPOS, WM_NCDESTROY, WM_PAINT, WM_TIMER,
-            WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOREDIRECTIONBITMAP,
-            WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, GetWindowRect, IDC_ARROW, IsWindowVisible,
+            KillTimer, LoadCursorW, RegisterClassExW, SetTimer, WINDOWPOS, WM_NCDESTROY, WM_PAINT,
+            WM_TIMER, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE,
+            WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -43,6 +43,7 @@ use windows_core::{
     BOOL, BSTR, ComObject, ComObjectInner, GUID, HSTRING, Interface, PCWSTR,
     Result as WindowsResult, implement, w,
 };
+use windows_numerics::Vector2;
 
 use crate::{
     text_service::ui_elements::UiError,
@@ -77,6 +78,9 @@ struct NotificationInner {
 #[derive(Default)]
 pub(crate) struct NotificationModel {
     pub(crate) text: HSTRING,
+    /// Where to draw a caret, in UTF-16 units into `text`: the keyboard hook
+    /// shows what is being typed here, since the app doesn't.
+    pub(crate) caret: Option<u32>,
     pub(crate) font_family: HSTRING,
     pub(crate) font_size: f32,
     pub(crate) fg_color: D2D1_COLOR_F,
@@ -172,7 +176,8 @@ impl View {
                 parent,
                 w!("ChewingNotificationWindow"),
                 WS_POPUP | WS_CLIPCHILDREN,
-                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+                // Never take the focus from the window being typed into.
+                WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
                 user_data.into_raw().cast(),
             );
             unsafe {
@@ -332,6 +337,24 @@ impl View {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
+                    if let Some(caret) = model.caret {
+                        let layout = dwrite_factory.CreateTextLayout(
+                            &model.text,
+                            &text_format,
+                            f32::MAX,
+                            f32::MAX,
+                        )?;
+                        let (mut x, mut y) = (0.0, 0.0);
+                        let mut hit = DWRITE_HIT_TEST_METRICS::default();
+                        layout.HitTestTextPosition(caret, false, &mut x, &mut y, &mut hit)?;
+                        dc.DrawLine(
+                            Vector2::new(margin + x, margin + y),
+                            Vector2::new(margin + x, margin + y + hit.height),
+                            &brush,
+                            1.5,
+                            None,
+                        );
+                    }
                     dc.EndDraw(None, None)?;
 
                     // Present the draw buffer
@@ -452,6 +475,24 @@ impl Notification {
             window.refresh();
             window.show();
         }
+    }
+    pub(crate) fn hide(&self) {
+        if let Some(window) = self.inner.view.borrow().window() {
+            window.hide();
+        }
+    }
+    /// Where the window is on screen, if it is shown.
+    pub(crate) fn window_rect(&self) -> Option<RECT> {
+        let view = self.inner.view.borrow();
+        let hwnd = view.window()?.hwnd();
+        let mut rect = RECT::default();
+        unsafe {
+            if !IsWindowVisible(hwnd).as_bool() {
+                return None;
+            }
+            GetWindowRect(hwnd, &mut rect).ok()?;
+        }
+        Some(rect)
     }
 }
 

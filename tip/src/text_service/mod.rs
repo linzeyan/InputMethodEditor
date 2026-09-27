@@ -32,7 +32,7 @@ mod display_attribute;
 mod edit_session;
 pub(crate) mod icons;
 mod lang_bar;
-mod menu;
+pub(crate) mod menu;
 pub(crate) mod resources;
 pub(crate) mod theme;
 pub(crate) mod ui_elements;

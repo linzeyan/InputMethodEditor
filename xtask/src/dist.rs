@@ -108,12 +108,19 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             x86_out.join("chewing_tip.dll"),
             sh.create_dir(dir.join("x86"))?,
         )?;
+        // Beside the DLL, which finds the dictionary from its own folder's
+        // parent. Not in the MSI: it is for accounts that can't run one.
+        sh.copy_file(
+            native_out.join("InputMethodEditor.exe"),
+            dir.join(native_dir),
+        )?;
         sh.copy_file(native_out.join("tsfreg.exe"), &dir)?;
         // The release profile keeps debuginfo for crash analysis; with MSVC it
         // goes to a separate .pdb, but gnullvm embeds it in the binaries.
         if flags.release && matches!(flags.target, Some(Target::GnuLlvm)) {
             let binaries = [
                 dir.join(native_dir).join("chewing_tip.dll"),
+                dir.join(native_dir).join("InputMethodEditor.exe"),
                 dir.join("x86").join("chewing_tip.dll"),
                 dir.join("tsfreg.exe"),
             ];
