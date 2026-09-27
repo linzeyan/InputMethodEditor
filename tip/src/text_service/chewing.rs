@@ -23,15 +23,10 @@ use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::Syllable;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::ipc::client::ChewingIpcClient;
-use chewing_tip_core::ipc::messages::{CheckUpdate, OnTestKeyDown};
-use chewing_tip_core::ipc::values::{IpcKeyEvent, IpcShiftKeyState};
-use chewing_tip_core::ipc::varlink::MethodCall;
-use chewing_tip_core::shell::{launch_tip_host, open_url};
+use chewing_tip_core::shell::open_url;
 use log::{debug, error, info};
 use scoped_error::impl_context_error;
 use scoped_error::{ErrorExt, expect_error};
-use serde_json::Value;
 use windows::Win32::Foundation::{GetLastError, HINSTANCE, POINT, RECT};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::Input::KeyboardAndMouse::GetFocus;
@@ -46,9 +41,8 @@ use windows::Win32::UI::TextServices::{
     ITfComposition, ITfLangBarItemButton, ITfLangBarItemMgr, ITfThreadMgr,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    CheckMenuItem, EnableMenuItem, GetCursorPos, HICON, HMENU, MF_CHECKED, MF_ENABLED, MF_GRAYED,
-    MF_UNCHECKED, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD,
-    TrackPopupMenu,
+    CheckMenuItem, GetCursorPos, HICON, HMENU, MF_CHECKED, MF_UNCHECKED, TPM_BOTTOMALIGN,
+    TPM_LEFTALIGN, TPM_LEFTBUTTON, TPM_NONOTIFY, TPM_RETURNCMD, TrackPopupMenu,
 };
 use windows_core::{ComObject, ComObjectInner, GUID, HSTRING, Interface};
 use zhconv::{Variant, zhconv};
@@ -163,7 +157,6 @@ pub(super) struct ChewingTextService {
     lang_icons: LangIconSet,
     lang_bar_buttons: Vec<ITfLangBarItemButton>,
     composition_sink: ITfCompositionSink,
-    ipc_client: ChewingIpcClient,
 
     switch_lang_button: ComObject<LangBarButton>,
     switch_shape_button: ComObject<LangBarButton>,
@@ -282,7 +275,6 @@ impl ChewingTextService {
             thread_mgr,
             tid,
             composition_sink: ts.cast()?,
-            ipc_client: ChewingIpcClient::new(),
             input_da_atom: [input_da_atom_1, input_da_atom_2],
             _menu: menu,
             popup_menu,
@@ -313,20 +305,6 @@ impl ChewingTextService {
 
         if let Err(error) = cts.init_chewing_context() {
             error!("unable to initialize chewing: {error:#}");
-        }
-
-        if let Err(error) = cts.ipc_client.connect() {
-            error!("{}", error.report());
-        }
-
-        if let Err(error) = cts.ipc_client.send(MethodCall {
-            method: CheckUpdate::METHOD.to_string(),
-            oneway: Some(true),
-            parameters: Value::Null,
-            more: None,
-            upgrade: None,
-        }) {
-            error!("unable to send IPC message CheckUpdate: {}", error.report());
         }
 
         Ok(cts)
@@ -410,21 +388,7 @@ impl ChewingTextService {
         self.chewing_editor
             .set_editor_options(|opt| opt.language_mode = self.lang_mode.get().into());
 
-        if let Err(error) = self.ipc_client.ping() {
-            error!("{}", error.report());
-            if let Err(error) = self.ipc_client.connect() {
-                error!("{}", error.report());
-                info!("Restarting chewing_tip_host...");
-                if let Err(error) = launch_tip_host() {
-                    error!("{}", error.report());
-                } else if let Err(error) = self.ipc_client.connect() {
-                    error!("{}", error.report());
-                }
-            }
-        }
-
         let is_context_mutable = self.is_context_mutable(context)?;
-        let is_composing = self.is_composing();
         let evt = ev.to_keyboard_event(self.keymap);
         let simulate_english_layout = self.cfg.chewing_tsf.simulate_english_layout != 0;
         // Determine shift key state here, this might be our last chance seeing this key.
@@ -436,28 +400,6 @@ impl ChewingTextService {
         }
         debug!(evt:?, shift_key_state:? = self.shift_key_state; "on_test_keydown");
 
-        // Send IPC
-        let _handled = self.ipc_client.send(MethodCall {
-            method: OnTestKeyDown::METHOD.to_string(),
-            parameters: serde_json::to_value(OnTestKeyDown {
-                is_context_mutable,
-                is_composing,
-                shift_key_state: match self.shift_key_state {
-                    ShiftKeyState::Down(_) => IpcShiftKeyState::Down,
-                    ShiftKeyState::Consumed => IpcShiftKeyState::Consumed,
-                    ShiftKeyState::Up => IpcShiftKeyState::Up,
-                },
-                event: IpcKeyEvent {
-                    vk: ev.vk,
-                    scan_code: ev.scan_code,
-                    ascii_code: ev.ascii_code,
-                    key_state: ev.key_state.to_vec(),
-                },
-            })?,
-            oneway: None,
-            more: None,
-            upgrade: None,
-        });
         let mut shift_down = false;
         if (evt.ksym == SYM_LEFTSHIFT || evt.ksym == SYM_RIGHTSHIFT)
             && self.cfg.chewing_tsf.switch_lang_with_shift
@@ -1008,20 +950,10 @@ impl ChewingTextService {
                         error!("unable to toggle lang mode: {error}");
                     }
                 }
-                ID_HASHED => open_url("chewing-editor://open"),
-                ID_CONFIG => open_url("chewing-preferences://config"),
                 ID_OUTPUT_SIMP_CHINESE => {
                     if let Err(error) = self.toggle_simp_chinese() {
                         error!("unable to toggle simplified chinese: {error}");
                     }
-                }
-                ID_CHECK_NEW_VER => open_url(&self.cfg.chewing_tsf.update_info_url),
-                ID_ABOUT => open_url("chewing-preferences://about"),
-                ID_WEBSITE => open_url("https://chewing.im/"),
-                ID_GROUP => open_url("https://groups.google.com/group/chewing-devel"),
-                ID_BUGREPORT => open_url("https://codeberg.org/chewing/windows-chewing-tsf/issues"),
-                ID_DICT_BUGREPORT => {
-                    open_url("https://codeberg.org/chewing/libchewing-data/issues")
                 }
                 ID_MOEDICT => open_url("https://www.moedict.tw/"),
                 ID_DICT => open_url("https://dict.revised.moe.edu.tw/"),
@@ -1426,12 +1358,9 @@ impl ChewingTextService {
             (TsfLangMode::Chinese, false) => self.lang_icons.tc,
             _ => self.lang_icons.en,
         };
-        let show_dot = !self.cfg.chewing_tsf.update_info_url.is_empty();
-        match (ThemeDetector::detect_theme(), show_dot) {
-            (WindowsTheme::Light | WindowsTheme::Unknown, true) => icons.light_dot,
-            (WindowsTheme::Light | WindowsTheme::Unknown, false) => icons.light,
-            (WindowsTheme::Dark, true) => icons.dark_dot,
-            (WindowsTheme::Dark, false) => icons.dark,
+        match ThemeDetector::detect_theme() {
+            WindowsTheme::Light | WindowsTheme::Unknown => icons.light,
+            WindowsTheme::Dark => icons.dark,
         }
     }
 
@@ -1559,16 +1488,6 @@ impl ChewingTextService {
                     MF_CHECKED.0
                 } else {
                     MF_UNCHECKED.0
-                },
-            );
-        }
-        unsafe {
-            let _ = EnableMenuItem(
-                self.popup_menu,
-                ID_CHECK_NEW_VER,
-                match self.cfg.chewing_tsf.update_info_url.as_str() {
-                    "" => MF_GRAYED,
-                    _ => MF_ENABLED,
                 },
             );
         }

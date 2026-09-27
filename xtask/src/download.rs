@@ -7,26 +7,12 @@ use xshell::{Shell, cmd};
 
 use crate::{flags::DownloadComponents, zip::unzip};
 
-const MANIFEST: [(&str, &str, &str, &str); 3] = [
-    (
-        "https://codeberg.org/chewing/windows-chewing-preferences/releases/download/v26.6.0.1/windows-chewing-preferences-26.6.0.1-x86_64-pc-windows.zip",
-        "https://codeberg.org/chewing/windows-chewing-preferences/releases/download/v26.6.0.1/windows-chewing-preferences-26.6.0.1-x86_64-pc-windows.zip.asc",
-        "windows-chewing-preferences.zip",
-        "build/installer",
-    ),
-    (
-        "https://codeberg.org/chewing/windows-chewing-editor/releases/download/nightly/windows-chewing-editor-x86_64-pc-windows.zip",
-        "https://codeberg.org/chewing/windows-chewing-editor/releases/download/nightly/windows-chewing-editor-x86_64-pc-windows.zip.asc",
-        "windows-chewing-editor.zip",
-        "build/installer",
-    ),
-    (
-        "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip",
-        "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip.asc",
-        "libchewing-data.zip",
-        "build/installer/Dictionary",
-    ),
-];
+const MANIFEST: [(&str, &str, &str, &str); 1] = [(
+    "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip",
+    "https://codeberg.org/chewing/libchewing-data/releases/download/v2026.9.25/libchewing-data-2026.9.25-Generic.zip.asc",
+    "libchewing-data.zip",
+    "build/installer/Dictionary",
+)];
 
 pub(crate) fn download_components(_flags: DownloadComponents) -> Result<(), Error> {
     expect_error("failed to download components", || {

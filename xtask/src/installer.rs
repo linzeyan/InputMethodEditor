@@ -5,7 +5,7 @@ use std::{path::PathBuf, str::FromStr};
 use scoped_error::{Error, expect_error};
 use xshell::{Shell, cmd};
 
-use crate::flags::{BuildInstaller, PackageInstaller};
+use crate::flags::BuildInstaller;
 
 #[derive(Debug)]
 pub(super) enum Target {
@@ -73,18 +73,7 @@ pub(crate) fn build_installer(flags: BuildInstaller) -> Result<(), Error> {
         {
             cmd!(
                 sh,
-                "cargo install --locked chewing-cli --version 0.13.0
-                 --root build --target {x86_64_target} --features sqlite-bundled"
-            )
-            .run()?;
-            cmd!(
-                sh,
                 "cargo build -p chewing_tip {release...} --target {x86_64_target}"
-            )
-            .run()?;
-            cmd!(
-                sh,
-                "cargo build -p chewing_tip_host {release...} --target {x86_64_target}"
             )
             .run()?;
             cmd!(
@@ -102,25 +91,6 @@ pub(crate) fn build_installer(flags: BuildInstaller) -> Result<(), Error> {
         }
 
         sh.create_dir("build/installer")?;
-        {
-            let _p = sh.push_dir("installer");
-            for file in [
-                "gpl-notice.rtf",
-                "windows-chewing-tsf.wixproj",
-                "windows-chewing-tsf.wxs",
-                "windows-chewing-tsf.wxl",
-                "version.wxi",
-                "version.json",
-            ] {
-                sh.copy_file(file, "../build/installer")?;
-            }
-        }
-        sh.copy_file(
-            "tip/rc/im.chewing.Chewing.ico",
-            "build/installer/chewing.ico",
-        )?;
-        sh.copy_file("build/bin/chewing-cli.exe", "build/installer")?;
-
         sh.create_dir("build/installer/Dictionary")?;
 
         sh.create_dir("build/installer/x64")?;
@@ -136,13 +106,13 @@ pub(crate) fn build_installer(flags: BuildInstaller) -> Result<(), Error> {
                 "build/installer/x64",
             );
         }
-        for file in ["chewing_tip_host.exe", "tsfreg.exe"] {
+        for file in ["tsfreg.exe"] {
             sh.copy_file(
                 format!("{}/{file}", x86_64_target_dir.display()),
                 "build/installer",
             )?;
         }
-        for file in ["chewing_tip_host.pdb", "tsfreg.pdb"] {
+        for file in ["tsfreg.pdb"] {
             let _ = sh.copy_file(
                 format!("{}/{file}", x86_64_target_dir.display()),
                 "build/installer",
@@ -161,28 +131,6 @@ pub(crate) fn build_installer(flags: BuildInstaller) -> Result<(), Error> {
                 "build/installer/x86",
             );
         }
-
-        Ok(())
-    })
-}
-
-pub(crate) fn package_installer(_flags: PackageInstaller) -> Result<(), Error> {
-    expect_error("Failed to package installer", || {
-        let sh = Shell::new()?;
-
-        sh.create_dir("dist")?;
-        {
-            let _p = sh.push_dir("build/installer");
-            cmd!(
-                sh,
-                "msbuild -p:Configuration=Release -restore windows-chewing-tsf.wixproj"
-            )
-            .run()?;
-        }
-        sh.copy_file(
-            "build/installer/bin/Release/zh-TW/windows-chewing-tsf.msi",
-            "dist/windows-chewing-tsf-unsigned.msi",
-        )?;
 
         Ok(())
     })

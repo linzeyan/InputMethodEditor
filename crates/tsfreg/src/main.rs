@@ -5,9 +5,6 @@
 
 use std::{env, process};
 
-use chewing_tip_core::ipc::{client::ChewingIpcClient, messages::Stop, varlink::MethodCall};
-use scoped_error::ErrorExt;
-use serde_json::Value;
 use windows::{
     Win32::{
         Globalization::*,
@@ -165,25 +162,6 @@ fn disable() {
     // }
 }
 
-fn stop() {
-    let client = ChewingIpcClient::new();
-    if let Err(error) = client.connect() {
-        println!("Error: failed to stop chewing_tip_host");
-        println!("Caused by: {}", error.report());
-        return;
-    }
-    if let Err(error) = client.send(MethodCall {
-        method: Stop::METHOD.to_string(),
-        parameters: Value::Null,
-        oneway: Some(true),
-        more: None,
-        upgrade: None,
-    }) {
-        println!("Error: failed to stop chewing_tip_host");
-        println!("Caused by: {}", error.report());
-    }
-}
-
 fn main() -> Result<()> {
     unsafe {
         if IsDebuggerPresent().as_bool() {
@@ -197,7 +175,6 @@ fn main() -> Result<()> {
             println!("  tsfreg -i           立即啟用輸入法");
             println!("  tsfreg -d           立即停用輸入法");
             println!("  tsfreg -u                 取消註冊");
-            println!("  tsfreg -s   停止 chewing_tip_host");
             process::exit(1);
         }
 
@@ -208,8 +185,6 @@ fn main() -> Result<()> {
             enable();
         } else if let Some("-d") = env::args().nth(1).as_deref() {
             disable();
-        } else if let Some("-s") = env::args().nth(1).as_deref() {
-            stop();
         } else if let Err(err) = unregister() {
             println!("警告：無法解除輸入法註冊，反安裝可能無法正常完成。");
             println!("錯誤訊息：{:?}", err);

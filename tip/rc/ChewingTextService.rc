@@ -61,12 +61,6 @@ IDI_ENG                 ICON                    "eng.ico"
 IDI_ENG_DARK            ICON                    "eng_dark.ico"
 IDI_SIMP                ICON                    "simp.ico"
 IDI_SIMP_DARK           ICON                    "simp_dark.ico"
-IDI_CHI_DOT             ICON                    "chi_dot.ico"
-IDI_CHI_DARK_DOT        ICON                    "chi_dark_dot.ico"
-IDI_ENG_DOT             ICON                    "eng_dot.ico"
-IDI_ENG_DARK_DOT        ICON                    "eng_dark_dot.ico"
-IDI_SIMP_DOT            ICON                    "simp_dot.ico"
-IDI_SIMP_DARK_DOT       ICON                    "simp_dark_dot.ico"
 IDI_FULL_SHAPE          ICON                    "full.ico"
 IDI_HALF_SHAPE          ICON                    "half.ico"
 
@@ -118,17 +112,7 @@ IDR_MENU MENU
 BEGIN
     POPUP "POPUP"
     BEGIN
-        MENUITEM "有新版本可以下載(&U)",                ID_CHECK_NEW_VER
-        MENUITEM "關於新酷音輸入法(&A)",                ID_ABOUT
-        MENUITEM "參觀新酷音官方網站(&W)",               ID_WEBSITE
-        MENUITEM "新酷音線上討論區(&G)",                ID_GROUP
-        MENUITEM SEPARATOR
-        MENUITEM "軟體本身的建議及錯誤回報(&B)",            ID_BUGREPORT
-        MENUITEM "注音及選字選詞錯誤回報 (&P)",            ID_DICT_BUGREPORT
-        MENUITEM SEPARATOR
         MENUITEM "新酷音使用說明 (&H)",                ID_CHEWING_HELP
-        MENUITEM "編輯使用者詞庫 (&E)",                 ID_HASHED
-        MENUITEM "設定新酷音輸入法(&C)",                ID_CONFIG
         MENUITEM SEPARATOR
         POPUP "網路辭典 (&D)"
         BEGIN

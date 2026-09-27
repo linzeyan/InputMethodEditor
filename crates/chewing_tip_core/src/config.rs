@@ -80,9 +80,6 @@ pub struct ChewingTsfConfig {
     pub simulate_english_layout: i32,
     pub sync_lang_mode_openclose: bool,
     pub keybind: Vec<KeybindValue>,
-    pub auto_check_update_channel: String,
-    pub update_info_url: String,
-    pub last_update_check_time: u64,
     pub modified_timestamp: u64,
 }
 
@@ -140,9 +137,6 @@ impl Default for ChewingTsfConfig {
                     param: "".to_string(),
                 },
             ],
-            auto_check_update_channel: "stable".to_string(),
-            update_info_url: "".to_string(),
-            last_update_check_time: 0,
             modified_timestamp: 0,
         }
     }
@@ -293,15 +287,6 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "EnableFullwidthToggleKey") {
                 cfg.enable_fullwidth_toggle_key = value;
             }
-            if let Ok(value) = key.get_string("AutoCheckUpdateChannel") {
-                cfg.auto_check_update_channel = value;
-            }
-            if let Ok(value) = key.get_string("UpdateInfoUrl") {
-                cfg.update_info_url = value;
-            }
-            if let Ok(value) = key.get_u64("LastUpdateCheckTime") {
-                cfg.last_update_check_time = value;
-            }
             if let Ok(value) = key.get_u64("ModifiedTimestamp") {
                 cfg.modified_timestamp = value;
             }
@@ -433,10 +418,6 @@ impl Config {
             chewing_tsf.upper_case_with_shift,
         );
         let _ = reg_set_bool(&key, "EnableAutoLearn", chewing_tsf.enable_auto_learn);
-        let _ = key.set_string(
-            "AutoCheckUpdateChannel",
-            &chewing_tsf.auto_check_update_channel,
-        );
         let _ = key.set_multi_string(
             "Keybind".to_string(),
             chewing_tsf

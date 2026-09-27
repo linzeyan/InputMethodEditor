@@ -39,10 +39,6 @@ mod flags {
             cmd download-components {
 
             }
-            /// Build the MSI package
-            cmd package-installer {
-
-            }
         }
     }
     // generated start
@@ -58,7 +54,6 @@ mod flags {
         UpdateVersion(UpdateVersion),
         BuildInstaller(BuildInstaller),
         DownloadComponents(DownloadComponents),
-        PackageInstaller(PackageInstaller),
     }
 
     #[derive(Debug)]
@@ -78,9 +73,6 @@ mod flags {
 
     #[derive(Debug)]
     pub struct DownloadComponents;
-
-    #[derive(Debug)]
-    pub struct PackageInstaller;
 
     impl Xtask {
         #[allow(dead_code)]
@@ -114,9 +106,6 @@ fn main() -> Result<(), Error> {
             }
             flags::XtaskCmd::DownloadComponents(flags) => {
                 download::download_components(flags)?;
-            }
-            flags::XtaskCmd::PackageInstaller(flags) => {
-                installer::package_installer(flags)?;
             }
         }
 
