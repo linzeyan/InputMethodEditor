@@ -120,10 +120,10 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
     })
 }
 
-/// Entries keep the top folder name so unzipping yields a single folder.
+/// Entries have no top folder: Explorer's Extract All already creates one named
+/// after the zip, and a second level inside it only gets in the way.
 fn zip_dir(dir: &Path, dest: &Path) -> Result<(), Error> {
     expect_error("failed to write the zip file", || {
-        let base = dir.parent().unwrap_or(Path::new(""));
         let options = SimpleFileOptions::default();
         let mut zip = ZipWriter::new(File::create(dest)?);
         let mut pending = vec![dir.to_path_buf()];
@@ -134,10 +134,7 @@ fn zip_dir(dir: &Path, dest: &Path) -> Result<(), Error> {
                     pending.push(path);
                     continue;
                 }
-                let name = path
-                    .strip_prefix(base)?
-                    .to_string_lossy()
-                    .replace('\\', "/");
+                let name = path.strip_prefix(dir)?.to_string_lossy().replace('\\', "/");
                 zip.start_file(name, options)?;
                 io::copy(&mut File::open(&path)?, &mut zip)?;
             }

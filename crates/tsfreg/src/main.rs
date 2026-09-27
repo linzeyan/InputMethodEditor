@@ -12,6 +12,7 @@ use chewing_tip_core::PRODUCT_NAME;
 use chewing_tip_core::config::grant_app_container_access;
 use windows::{
     Win32::{
+        Foundation::ERROR_FILE_NOT_FOUND,
         Globalization::*,
         Security::Authorization::{SE_FILE_OBJECT, SE_REGISTRY_KEY},
         Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ},
@@ -206,15 +207,25 @@ fn unregister() -> Outcome {
         }
     }
 
+    // UnregisterProfile and UnregisterCategory delete only the leaf entries,
+    // leaving the TIP's key tree behind in both registry views.
     for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
-        let removed = LOCAL_MACHINE
-            .options()
-            .write()
-            .access(view.0)
-            .open(r"Software\Classes\CLSID")
-            .and_then(|clsid| clsid.remove_tree(CHEWING_TSF_CLSID_STR));
-        if let Err(error) = removed {
-            failures.push(format!("COM 註冊：{error}"));
+        for (parent, step) in [
+            (r"Software\Classes\CLSID", "COM 註冊"),
+            (r"SOFTWARE\Microsoft\CTF\TIP", "TSF 登錄"),
+        ] {
+            let removed = LOCAL_MACHINE
+                .options()
+                .write()
+                .access(view.0)
+                .open(parent)
+                .and_then(|key| key.remove_tree(CHEWING_TSF_CLSID_STR));
+            match removed {
+                // Already gone, e.g. a view the registration never wrote to.
+                Err(error) if error.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) => {}
+                Err(error) => failures.push(format!("{step}：{error}")),
+                Ok(()) => {}
+            }
         }
     }
 
