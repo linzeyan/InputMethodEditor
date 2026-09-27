@@ -27,9 +27,11 @@ use windows::{
             },
         },
     },
-    core::{PCWSTR, PWSTR, w},
+    core::{HSTRING, PCWSTR, PWSTR},
 };
 use windows_registry::{CURRENT_USER, Key};
+
+use crate::PRODUCT_NAME;
 
 #[derive(Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -158,7 +160,7 @@ impl Config {
                 .options()
                 .read()
                 .access(KEY_WOW64_64KEY.0)
-                .open("Software\\ChewingTextService")?;
+                .open(format!("Software\\{PRODUCT_NAME}"))?;
             let mut cfg = ChewingTsfConfig::default();
 
             // if let Ok(path) = user_symbols_dat_path() {
@@ -312,7 +314,7 @@ impl Config {
             .create()
             .access(KEY_WOW64_64KEY.0)
             .write()
-            .open("Software\\ChewingTextService")
+            .open(format!("Software\\{PRODUCT_NAME}"))
         else {
             error!("Unable to open registry for write");
             return;
@@ -437,11 +439,10 @@ impl Config {
 
         // AppContainer app, like the SearchHost.exe powering the start menu search bar
         // needs this to access the settings.
-        if let Err(error) = grant_app_container_access(
-            w!(r"CURRENT_USER\Software\ChewingTextService"),
-            SE_REGISTRY_KEY,
-            KEY_READ.0,
-        ) {
+        let key_path = HSTRING::from(format!(r"CURRENT_USER\Software\{PRODUCT_NAME}"));
+        if let Err(error) =
+            grant_app_container_access(PCWSTR(key_path.as_ptr()), SE_REGISTRY_KEY, KEY_READ.0)
+        {
             error!("Failed to grant app container access: {error:#}");
         }
     }

@@ -23,7 +23,7 @@ use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::Syllable;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::shell::open_url;
+use chewing_tip_core::shell::{open_url, user_dir};
 use log::{debug, error, info};
 use scoped_error::impl_context_error;
 use scoped_error::{ErrorExt, expect_error};
@@ -68,11 +68,11 @@ use crate::text_service::key_event::{KeymapOp, SimulatedKeyboard};
 use crate::text_service::lang_bar::LangBarFactory;
 use crate::ui::gfx::color_s;
 
-const GUID_MODE_BUTTON: GUID = GUID::from_u128(0xB59D51B9_B832_40D2_9A8D_56959372DDC7);
-const GUID_SHAPE_TYPE_BUTTON: GUID = GUID::from_u128(0x5325DBF5_5FBE_467B_ADF0_2395BE9DD2BB);
-const GUID_SETTINGS_BUTTON: GUID = GUID::from_u128(0x4FAFA520_2104_407E_A532_9F1AAB7751CD);
+const GUID_MODE_BUTTON: GUID = GUID::from_u128(0xD7F58996_ED24_4B6C_AAC6_2499672B9902);
+const GUID_SHAPE_TYPE_BUTTON: GUID = GUID::from_u128(0xD9D1C5FD_F180_4A43_B31B_975F0968AD7B);
+const GUID_SETTINGS_BUTTON: GUID = GUID::from_u128(0xFE45B830_ABF1_4BAA_9E25_1BCD2AA164E4);
 
-pub(crate) const CLSID_TEXT_SERVICE: GUID = GUID::from_u128(0x13F2EF08_575C_4D8C_88E0_F67BB8052B84);
+pub(crate) const CLSID_TEXT_SERVICE: GUID = GUID::from_u128(0xE0C45601_7E8F_4FEF_9871_8B0C785B9B48);
 
 impl_context_error!(TsfError);
 
@@ -269,7 +269,7 @@ impl ChewingTextService {
         });
 
         // Initialize a temp editor, this will be replaced in init_chewing_context.
-        let editor = Editor::chewing(None, None)?;
+        let editor = new_editor()?;
 
         let mut cts = ChewingTextService {
             thread_mgr,
@@ -1377,7 +1377,7 @@ impl ChewingTextService {
 
     fn build_editor_from_cfg(cfg: &ChewingTsfConfig) -> Result<Editor> {
         // Recreate editor to load latest user files
-        let mut editor = Editor::chewing(None, None)?;
+        let mut editor = new_editor()?;
         editor.set_editor_options(|opt| {
             opt.easy_symbol_input = cfg.easy_symbols_with_shift || cfg.easy_symbols_with_shift_ctrl;
             // NB: Historically the config was inverted
@@ -1565,6 +1565,14 @@ impl<'a> ReentrantOps<'a> {
 
         Ok(())
     }
+}
+
+fn new_editor() -> Result<Editor> {
+    let user_dir = user_dir()?;
+    Ok(Editor::chewing(
+        None,
+        Some(user_dir.to_string_lossy().into_owned()),
+    )?)
 }
 
 fn syl_editor_from_kbtype(kbtype: KeyboardLayoutCompat) -> Box<dyn SyllableEditor> {

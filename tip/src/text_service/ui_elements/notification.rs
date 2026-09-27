@@ -447,7 +447,7 @@ impl ITfUIElement_Impl for Notification_Impl {
     }
 
     fn GetGUID(&self) -> WindowsResult<GUID> {
-        Ok(GUID::from_u128(0x80cd1c64_5c4a_4478_8690_20c489534629))
+        Ok(GUID::from_u128(0x4604FDBC_C97E_4957_88BB_E71BB74E0056))
     }
 
     fn Show(&self, show: BOOL) -> WindowsResult<()> {

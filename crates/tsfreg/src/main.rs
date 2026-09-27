@@ -25,11 +25,10 @@ windows::core::link!("input.dll" "system" fn InstallLayoutOrTip(psz: *const u16,
 const ILOT_INSTALL: u32 = 0x00000000;
 // const ILOT_UNINSTALL: u32 = 0x00000001;
 
-const CHEWING_TSF_CLSID: GUID = GUID::from_u128(0x13F2EF08_575C_4D8C_88E0_F67BB8052B84);
-const CHEWING_ZH_TW_PROFILE_GUID: GUID = GUID::from_u128(0xCE45F71D_CE79_41D1_967D_640B65A380E3);
-const CHEWING_ZH_CN_PROFILE_GUID: GUID = GUID::from_u128(0x9063E7CC_225E_4CEA_B7A1_2B0FB12A75CF);
+const CHEWING_TSF_CLSID: GUID = GUID::from_u128(0xE0C45601_7E8F_4FEF_9871_8B0C785B9B48);
+const CHEWING_ZH_TW_PROFILE_GUID: GUID = GUID::from_u128(0x65C3BF2B_7BF5_4B82_8D03_1EC109E380C4);
 const CHEWING_TIP_DESC: PCWSTR =
-    w!("0x0404:{13F2EF08-575C-4D8C-88E0-F67BB8052B84}{CE45F71D-CE79-41D1-967D-640B65A380E3}");
+    w!("0x0404:{E0C45601-7E8F-4FEF-9871-8B0C785B9B48}{65C3BF2B-7BF5-4B82-8D03-1EC109E380C4}");
 
 const CATEGORIES: [GUID; 7] = [
     GUID_TFCAT_TIP_KEYBOARD,
@@ -57,24 +56,7 @@ fn register(icon_path: String) -> Result<()> {
             &CHEWING_TSF_CLSID,
             lcid as u16,
             &CHEWING_ZH_TW_PROFILE_GUID,
-            w!("新酷音輸入法").as_wide(),
-            &pw_icon_path,
-            0,
-            HKL::default(),
-            0,
-            false,
-            0,
-        )?;
-        // Register for zh_CN
-        let mut lcid = LocaleNameToLCID(w!("zh-CN"), 0);
-        if matches!(lcid, 0 | 0x0C00 | 0x1000) {
-            lcid = 0x804;
-        }
-        input_processor_profile_mgr.RegisterProfile(
-            &CHEWING_TSF_CLSID,
-            lcid as u16,
-            &CHEWING_ZH_CN_PROFILE_GUID,
-            w!("新酷音输入法").as_wide(),
+            w!("InputMethodEditor").as_wide(),
             &pw_icon_path,
             0,
             HKL::default(),
@@ -126,17 +108,6 @@ fn unregister() -> Result<()> {
             &CHEWING_TSF_CLSID,
             lcid as u16,
             &CHEWING_ZH_TW_PROFILE_GUID,
-            0,
-        )?;
-        // Unregister zh_CN profile
-        let mut lcid = LocaleNameToLCID(w!("zh-CN"), 0);
-        if matches!(lcid, 0 | 0x0C00 | 0x1000) {
-            lcid = 0x804;
-        }
-        input_processor_profile_mgr.UnregisterProfile(
-            &CHEWING_TSF_CLSID,
-            lcid as u16,
-            &CHEWING_ZH_CN_PROFILE_GUID,
             0,
         )?;
     }

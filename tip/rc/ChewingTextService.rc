@@ -86,13 +86,13 @@ BEGIN
     BEGIN
         BLOCK "040404b0"
         BEGIN
-            VALUE "CompanyName", "Chewing"
-            VALUE "FileDescription", "新酷音輸入法"
+            VALUE "CompanyName", "InputMethodEditor"
+            VALUE "FileDescription", "InputMethodEditor"
             VALUE "FileVersion", VER_FILEVERSION_STR
             VALUE "InternalName", "ChewingTextService.dll"
             VALUE "LegalCopyright", "Copyright (C) 2013-2025"
             VALUE "OriginalFilename", "ChewingTextService.dll"
-            VALUE "ProductName", "新酷音輸入法"
+            VALUE "ProductName", "InputMethodEditor"
             VALUE "ProductVersion", VER_PRODUCTVERSION_STR
         END
     END

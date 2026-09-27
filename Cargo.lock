@@ -303,7 +303,6 @@ dependencies = [
 name = "chewing_tip_core"
 version = "26.7.2"
 dependencies = [
- "chewing",
  "log",
  "scoped-error",
  "serde",

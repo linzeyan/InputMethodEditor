@@ -4,7 +4,6 @@ version.workspace = true
 edition = "2024"
 
 [dependencies]
-chewing.workspace = true
 log.workspace = true
 scoped-error.workspace = true
 serde.workspace = true
