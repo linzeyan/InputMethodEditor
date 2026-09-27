@@ -1,6 +1,6 @@
 /build
 /dist
 /.cache
-
+/docs
 target
 node_modules
