@@ -24,7 +24,7 @@ use chewing::input::keymap::{
 };
 use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE};
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
-use chewing::zhuyin::Syllable;
+use chewing::zhuyin::{Bopomofo, Syllable};
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use log::{debug, error, info};
@@ -181,6 +181,9 @@ pub(super) struct ChewingTextService {
     /// For each slot in the candidate list, the editor's index on the current
     /// page. They differ once converted duplicates are hidden.
     candidate_indices: Vec<usize>,
+    /// What the character had before the last key, a Space, made it tone 1.
+    /// A second Space puts it back and types a space.
+    space_undo: Option<Syllable>,
     composition: Rc<RefCell<Option<ITfComposition>>>,
     pending_edit: Weak<RefCell<Option<CompositionString>>>,
 }
@@ -300,6 +303,7 @@ impl ChewingTextService {
             notification: Default::default(),
             candidate_list: Default::default(),
             candidate_indices: vec![],
+            space_undo: None,
             composition: Default::default(),
             pending_edit: Weak::new(),
             pending_lang_mode_change: Cell::new(false),
@@ -522,6 +526,8 @@ impl ChewingTextService {
         context: &ITfContext,
         ev: SystemKeyboardEvent,
     ) -> Result<bool> {
+        // Only the very next key may undo a tone-1 Space.
+        let space_undo = self.space_undo.take();
         if !self.on_test_keydown(context, ev)? {
             return Ok(false);
         }
@@ -629,7 +635,15 @@ impl ChewingTextService {
                 self.chewing_editor.process_keyevent(evt);
                 self.chewing_editor
                     .set_editor_options(|opt| opt.language_mode = old_lang_mode);
-            } else if !change_tone(&mut self.chewing_editor, self.kbtype, evt) {
+            } else if let Some(old) = space_undo.filter(|_| evt.ksym == SYM_SPACE) {
+                // Two Spaces type a space and leave the character as it was.
+                retone(&mut self.chewing_editor, self.kbtype, old.tone());
+                self.chewing_editor.process_keyevent(evt);
+            } else if let Some(old) = change_tone(&mut self.chewing_editor, self.kbtype, evt) {
+                if evt.ksym == SYM_SPACE {
+                    self.space_undo = Some(old);
+                }
+            } else {
                 self.chewing_editor.process_keyevent(evt);
             }
         } else {
@@ -1724,32 +1738,58 @@ fn keymap_from_kbtype(kbtype: KeyboardLayoutCompat) -> KeymapOp {
 
 /// A tone key typed right after a character re-types that character with the
 /// new tone: 嗎 then ˇ gives 馬. Chewing would otherwise start a new syllable
-/// with the tone alone.
-fn change_tone(editor: &mut Editor, kbtype: KeyboardLayoutCompat, evt: KeyboardEvent) -> bool {
-    if evt.has_modifiers()
-        || editor.editor_options().language_mode != LanguageMode::Chinese
+/// with the tone alone. Returns the syllable the character had.
+fn change_tone(
+    editor: &mut Editor,
+    kbtype: KeyboardLayoutCompat,
+    evt: KeyboardEvent,
+) -> Option<Syllable> {
+    if evt.has_modifiers() {
+        return None;
+    }
+    let tone = if evt.ksym == SYM_SPACE {
+        // Space is tone 1 in every layout, but they only read it to end a
+        // syllable, so the probe below can't see it.
+        if editor.editor_options().space_is_select_key {
+            return None;
+        }
+        None
+    } else {
+        // Asking the layout keeps this right for every layout, including those
+        // where the tone keys also type consonants, such as Hsu.
+        let mut probe = syl_editor_from_kbtype(kbtype);
+        probe.key_press(evt);
+        let typed = probe.read();
+        if typed.has_initial() || typed.has_medial() || typed.has_rime() {
+            return None;
+        }
+        Some(typed.tone()?)
+    };
+    retone(editor, kbtype, tone)
+}
+
+/// Re-types the character before the cursor with `tone`, None being tone 1,
+/// which chewing spells without a tone. Returns the syllable it had.
+fn retone(
+    editor: &mut Editor,
+    kbtype: KeyboardLayoutCompat,
+    tone: Option<Bopomofo>,
+) -> Option<Syllable> {
+    if editor.editor_options().language_mode != LanguageMode::Chinese
         || !editor.is_entering()
         || editor.entering_syllable()
         || editor.cursor() == 0
     {
-        return false;
+        return None;
     }
-    let Some(old) = editor.symbols()[editor.cursor() - 1].to_syllable() else {
-        return false;
-    };
-    // Asking the layout keeps this right for every layout, including those
-    // where the tone keys also type consonants, such as Hsu.
-    let mut probe = syl_editor_from_kbtype(kbtype);
-    probe.key_press(evt);
-    let typed = probe.read();
-    let Some(tone) = typed.tone() else {
-        return false;
-    };
-    if typed.has_initial() || typed.has_medial() || typed.has_rime() {
-        return false;
-    }
+    let old = editor.symbols()[editor.cursor() - 1].to_syllable()?;
     let mut new = old;
-    new.update(tone);
+    match tone {
+        Some(tone) => new.update(tone),
+        None => {
+            new.remove_tone();
+        }
+    }
     let len = editor.len();
     editor.process_keyevent(
         KeyboardEvent::builder()
@@ -1762,7 +1802,7 @@ fn change_tone(editor: &mut Editor, kbtype: KeyboardLayoutCompat, evt: KeyboardE
     if editor.len() < len {
         insert_syllable(editor, kbtype, old);
     }
-    true
+    Some(old)
 }
 
 fn insert_syllable(editor: &mut Editor, kbtype: KeyboardLayoutCompat, syllable: Syllable) {
@@ -1831,7 +1871,7 @@ mod tests {
     use chewing::zhuyin::Bopomofo as bpmf;
     use chewing_tip_core::config::ChewingTsfConfig;
 
-    use super::{change_tone, convert_output, convert_preedit, dedup_candidates};
+    use super::{change_tone, convert_output, convert_preedit, dedup_candidates, retone};
 
     fn simplified(vocabulary: bool) -> ChewingTsfConfig {
         ChewingTsfConfig {
@@ -1864,6 +1904,7 @@ mod tests {
         let mut strings = StringTableBuilder::new();
         strings.insert("嗎");
         strings.insert("馬");
+        strings.insert("媽");
         let strings = strings.build();
         let mut dict = StaticDictBuilder::new();
         dict.insert(
@@ -1874,6 +1915,7 @@ mod tests {
             &[syl![bpmf::M, bpmf::A, bpmf::TONE3]],
             strings.get_wid("馬").unwrap(),
         );
+        dict.insert(&[syl![bpmf::M, bpmf::A]], strings.get_wid("媽").unwrap());
         let mut editor = EditorBuilder::new()
             .string_table(strings)
             .static_dict(dict.build())
@@ -1884,27 +1926,28 @@ mod tests {
         }
         assert_eq!(editor.display(), "嗎");
 
-        assert!(change_tone(
-            &mut editor,
-            KeyboardLayoutCompat::Default,
-            key(b'3')
-        ));
+        let tone3 = syl![bpmf::M, bpmf::A, bpmf::TONE3];
+        let default = KeyboardLayoutCompat::Default;
+        assert!(change_tone(&mut editor, default, key(b'3')).is_some());
         assert_eq!(editor.display(), "馬");
         // No word here is ㄇㄚˋ; losing the character would be worse than
         // ignoring the key.
-        assert!(change_tone(
-            &mut editor,
-            KeyboardLayoutCompat::Default,
-            key(b'4')
-        ));
+        assert_eq!(change_tone(&mut editor, default, key(b'4')), Some(tone3));
         assert_eq!(editor.display(), "馬");
         // D is ˊ in Hsu only after a rime; alone it starts ㄉ, so it must
         // begin the next character.
-        assert!(!change_tone(
-            &mut editor,
-            KeyboardLayoutCompat::Hsu,
-            key(b'd')
-        ));
+        assert!(change_tone(&mut editor, KeyboardLayoutCompat::Hsu, key(b'd')).is_none());
+        assert_eq!(editor.display(), "馬");
+
+        // Space is tone 1, and what it returns lets a second Space undo it.
+        let old = change_tone(&mut editor, default, key(b' '));
+        assert_eq!(old, Some(tone3));
+        assert_eq!(editor.display(), "媽");
+        retone(&mut editor, default, old.unwrap().tone());
+        assert_eq!(editor.display(), "馬");
+        // Someone who set Space to open the candidate list still gets that.
+        editor.set_editor_options(|opt| opt.space_is_select_key = true);
+        assert!(change_tone(&mut editor, default, key(b' ')).is_none());
         assert_eq!(editor.display(), "馬");
     }
 }
