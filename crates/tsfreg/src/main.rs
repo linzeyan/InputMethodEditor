@@ -8,8 +8,8 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use chewing_tip_core::{PRODUCT_NAME, SETTINGS_EXE, SETTINGS_SCHEME};
 use chewing_tip_core::config::grant_app_container_access;
+use chewing_tip_core::{PRODUCT_NAME, SETTINGS_EXE, SETTINGS_SCHEME};
 use windows::{
     Win32::{
         Foundation::ERROR_FILE_NOT_FOUND,
@@ -267,7 +267,11 @@ fn unregister() -> Outcome {
     for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
         for (parent, name, step) in [
             (r"Software\Classes\CLSID", CHEWING_TSF_CLSID_STR, "COM 註冊"),
-            (r"SOFTWARE\Microsoft\CTF\TIP", CHEWING_TSF_CLSID_STR, "TSF 登錄"),
+            (
+                r"SOFTWARE\Microsoft\CTF\TIP",
+                CHEWING_TSF_CLSID_STR,
+                "TSF 登錄",
+            ),
             (r"Software\Classes", SETTINGS_SCHEME, "設定程式連結"),
         ] {
             let removed = LOCAL_MACHINE
