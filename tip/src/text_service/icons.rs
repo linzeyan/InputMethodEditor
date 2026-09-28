@@ -9,8 +9,7 @@ use windows_core::PCWSTR;
 use crate::{
     com::G_HINSTANCE,
     text_service::resources::{
-        IDI_CHI, IDI_CHI_DARK, IDI_ENG, IDI_ENG_DARK, IDI_FULL_SHAPE, IDI_HALF_SHAPE, IDI_SIMP,
-        IDI_SIMP_DARK,
+        IDI_CHI, IDI_CHI_DARK, IDI_ENG, IDI_ENG_DARK, IDI_SIMP, IDI_SIMP_DARK,
     },
 };
 
@@ -25,8 +24,6 @@ pub(crate) struct LangIconSet {
     pub(crate) tc: IconSet,
     pub(crate) sc: IconSet,
     pub(crate) en: IconSet,
-    pub(crate) full_shape: HICON,
-    pub(crate) half_shape: HICON,
 }
 
 impl LangIconSet {
@@ -45,8 +42,6 @@ impl LangIconSet {
                 dark: load_icon(g_hinstance, IDI_ENG_DARK),
                 light: load_icon(g_hinstance, IDI_ENG),
             },
-            full_shape: load_icon(g_hinstance, IDI_FULL_SHAPE),
-            half_shape: load_icon(g_hinstance, IDI_HALF_SHAPE),
         }
     }
 }

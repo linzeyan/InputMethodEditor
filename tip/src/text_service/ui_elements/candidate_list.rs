@@ -40,8 +40,9 @@ use windows::Win32::{
             TF_CLUIE_STRING,
         },
         WindowsAndMessaging::{
-            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, RegisterClassExW,
-            WINDOWPOS, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN,
+            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MA_NOACTIVATE,
+            PostMessageW, RegisterClassExW, WINDOWPOS, WM_LBUTTONUP, WM_MOUSEACTIVATE,
+            WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN,
             WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
@@ -52,7 +53,8 @@ use windows_core::{
 };
 
 use crate::{
-    text_service::ui_elements::UiError,
+    hook::WM_CANDIDATE,
+    text_service::{CommandType, run_command, ui_elements::UiError},
     ui::{
         gfx::{
             clamp_point_to_monitor, create_render_target, create_swapchain,
@@ -77,6 +79,10 @@ pub(crate) struct CandidateList {
 struct CandidateListInner {
     model: RefCell<Model>,
     view: RefCell<View>,
+    /// Told when an item is clicked; None when typing through the keyboard
+    /// hook, whose window `parent` is told instead.
+    thread_mgr: Option<ITfThreadMgr>,
+    parent: HWND,
 }
 
 #[derive(Default)]
@@ -147,8 +153,73 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             LRESULT(0)
         }
+        // WS_EX_NOACTIVATE keeps the app in front, but under TSF the list is
+        // the app's own window: clicked, it would still take the focus from
+        // the document, which ends the composition.
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_LBUTTONUP => {
+            if let Some(this) = get_this() {
+                this.clicked(hwnd, lparam);
+            }
+            LRESULT(0)
+        }
         _ => crate::ui::window::wnd_proc(hwnd, msg, wparam, lparam),
     }
+}
+
+impl CandidateListInner {
+    /// Selects the item under the pointer, as its key would.
+    fn clicked(&self, hwnd: HWND, lparam: LPARAM) {
+        let slot = {
+            let model = self.model.borrow();
+            let dpi = get_dpi_for_window(hwnd);
+            let Ok(metrics) = self.view.borrow().calculate_client_rect(&model, dpi) else {
+                return;
+            };
+            // Client pixels to the DIPs it is drawn in.
+            let scale = dpi / 96.0;
+            let x = (lparam.0 & 0xffff) as i16 as f32 / scale;
+            let y = ((lparam.0 >> 16) & 0xffff) as i16 as f32 / scale;
+            item_at(&metrics, model.cand_per_row, model.items.len(), x, y)
+        };
+        let Some(slot) = slot else {
+            return;
+        };
+        debug!(slot; "candidate clicked");
+        // Not borrowing the model: selecting redraws or closes this list.
+        match &self.thread_mgr {
+            Some(thread_mgr) => {
+                if let Err(error) = run_command(thread_mgr, slot as u32, CommandType::Candidate) {
+                    error!("unable to select the candidate: {error}");
+                }
+            }
+            None => unsafe {
+                let _ = PostMessageW(Some(self.parent), WM_CANDIDATE, WPARAM(slot), LPARAM(0));
+            },
+        }
+    }
+}
+
+/// The item at `(x, y)`, in DIPs from the window's corner, laid out as
+/// `on_paint` draws them.
+fn item_at(
+    metrics: &RenderedMetrics,
+    cand_per_row: u32,
+    count: usize,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    if x < MARGIN || y < MARGIN {
+        return None;
+    }
+    let col = ((x - MARGIN) / (metrics.selkey_width + metrics.text_width + COL_SPACING)) as usize;
+    let row = ((y - MARGIN) / (metrics.item_height + ROW_SPACING)) as usize;
+    let per_row = cand_per_row.max(1) as usize;
+    if col >= per_row {
+        return None;
+    }
+    let index = row * per_row + col;
+    (index < count).then_some(index)
 }
 
 enum View {
@@ -211,6 +282,7 @@ impl View {
     }
 }
 
+const MARGIN: f32 = 10.0;
 const ROW_SPACING: f32 = 4.0;
 const COL_SPACING: f32 = 8.0;
 
@@ -250,7 +322,7 @@ impl View {
                     )?
                 };
                 // Recalculate the size of the window
-                let margin: f32 = 10.0;
+                let margin = MARGIN;
                 let mut selkey_width: f32 = 0.0;
                 let mut text_width: f32 = 0.0;
                 let mut item_height: f32 = 0.0;
@@ -390,7 +462,7 @@ impl View {
                     dc.BeginDraw();
 
                     let mut col = 0;
-                    let margin = 10.0;
+                    let margin = MARGIN;
                     let mut x = margin;
                     let mut y = margin;
 
@@ -540,6 +612,8 @@ impl CandidateList {
         let inner = Rc::new(CandidateListInner {
             model: RefCell::new(Model::default()),
             view: RefCell::new(View::Dummy),
+            thread_mgr: thread_mgr.clone(),
+            parent,
         });
         let candidate_list = CandidateList {
             thread_mgr: thread_mgr.clone(),
@@ -757,5 +831,32 @@ impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
 
     fn GetCurrentPage(&self) -> WindowsResult<u32> {
         Ok(0) // Assuming single page for simplicity
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A click picks the item drawn there, or nothing: a wrong slot types the
+    /// wrong word.
+    #[test]
+    fn click_picks_the_item_drawn_there() {
+        // Columns every 48 DIPs, rows every 24; 7 items, 3 to a row.
+        let metrics = RenderedMetrics {
+            selkey_width: 10.0,
+            text_width: 30.0,
+            item_height: 20.0,
+            ..Default::default()
+        };
+        let at = |x, y| item_at(&metrics, 3, 7, MARGIN + x, MARGIN + y);
+        assert_eq!(at(1.0, 1.0), Some(0));
+        assert_eq!(at(49.0, 1.0), Some(1));
+        assert_eq!(at(1.0, 25.0), Some(3));
+        assert_eq!(at(1.0, 49.0), Some(6));
+        // Past the last item, the last column, and in the margin.
+        assert_eq!(at(49.0, 49.0), None);
+        assert_eq!(at(145.0, 1.0), None);
+        assert_eq!(item_at(&metrics, 3, 7, 1.0, 1.0), None);
     }
 }

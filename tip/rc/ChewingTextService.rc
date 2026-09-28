@@ -61,8 +61,6 @@ IDI_ENG                 ICON                    "eng.ico"
 IDI_ENG_DARK            ICON                    "eng_dark.ico"
 IDI_SIMP                ICON                    "simp.ico"
 IDI_SIMP_DARK           ICON                    "simp_dark.ico"
-IDI_FULL_SHAPE          ICON                    "full.ico"
-IDI_HALF_SHAPE          ICON                    "half.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
@@ -123,7 +121,6 @@ BEGIN
             MENUITEM "教育部國語小字典",                    ID_LITTLEDICT
             MENUITEM "教育部成語典",                      ID_PROVERBDICT
         END
-        MENUITEM "輸出全形英數字母 (&F)",             ID_SWITCH_SHAPE
         MENUITEM "輸出簡體中文 (&S)",                 ID_OUTPUT_SIMP_CHINESE
         MENUITEM "簡體改用大陸用語，如 軟體→软件 (&V)",   ID_OUTPUT_SIMP_VOCABULARY
     END
@@ -138,7 +135,6 @@ END
 STRINGTABLE
 BEGIN
     IDS_CHEWING             "新酷音輸入法"
-    IDS_SWITCH_SHAPE        "全形/半形切換"
     IDS_SWITCH_LANG         "中文/英文切換"
     IDS_SETTINGS            "設定/工具選單"
     IDS_CONFIG_TITLE        "設定新酷音輸入法"

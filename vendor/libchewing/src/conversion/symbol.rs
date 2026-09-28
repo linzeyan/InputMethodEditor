@@ -4,7 +4,10 @@ macro_rules! symbol_map {
     }};
 }
 
-static SPECIAL_SYMBOLS: [(char, char); 29] = symbol_map! {
+// '-' and '/' are zhuyin keys on the default layout; with pinyin, and the
+// layouts where they aren't, they are punctuation like the rest.
+static SPECIAL_SYMBOLS: [(char, char); 31] = symbol_map! {
+    '-' => '－', '/' => '／',
     '[' => '「', ']' => '」', '{' => '『', '}' => '』',
     '\'' => '、', '<' => '，', ':' => '：', '\"' => '；',
     '>' => '。', '~' => '～', '!' => '！', '@' => '＠',

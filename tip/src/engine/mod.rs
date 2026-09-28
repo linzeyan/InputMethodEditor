@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use chewing::editor::zhuyin_layout::{self, KeyBehavior, KeyboardLayoutCompat, SyllableEditor};
 use chewing::editor::{
-    BasicEditor, CharacterForm, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
+    BasicEditor, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
     UserPhraseAddDirection,
 };
 use chewing::input::keycode::Keycode;
@@ -145,7 +145,7 @@ pub(crate) trait Frontend {
         cursor: usize,
     ) -> Result<()>;
     fn end_composition(&mut self) -> Result<()>;
-    /// Shows the language mode, the character form and the output settings.
+    /// Shows the language mode and the output settings.
     fn update_lang_buttons(&self, engine: &Engine) -> Result<()>;
     /// The engine switched between Chinese and English itself.
     fn lang_mode_changed(&self);
@@ -299,29 +299,14 @@ impl Engine {
             return Ok(true);
         }
         if !self.is_composing(ui.has_composition()) {
-            let shape_mode = self.chewing_editor.editor_options().character_form;
-            // don't do further handling in pure English + half shape mode
-            if self.lang_mode.get() == LanguageMode::English
-                && shape_mode == CharacterForm::Halfwidth
-                && !simulate_english_layout
-            {
-                if evt.ksym == SYM_SPACE
-                    && evt.is_state_on(KeyState::Shift)
-                    && self.cfg.chewing_tsf.enable_fullwidth_toggle_key
-                {
-                    // need to handle fullwidth mode switch
-                    return Ok(true);
-                } else {
-                    debug!("key not handled - in English mode");
-                    return Ok(false);
-                }
+            // don't do further handling in pure English mode
+            if self.lang_mode.get() == LanguageMode::English && !simulate_english_layout {
+                debug!("key not handled - in English mode");
+                return Ok(false);
             }
-            // No need to handle VK_SPACE when not composing and not fullshape mode
+            // No need to handle VK_SPACE when not composing
             // This make the space key available for other shortcuts
-            if evt.ksym == SYM_SPACE
-                && shape_mode != CharacterForm::Fullwidth
-                && !evt.is_state_on(KeyState::Shift)
-            {
+            if evt.ksym == SYM_SPACE && !evt.is_state_on(KeyState::Shift) {
                 return Ok(false);
             }
             if !evt.ksym.is_unicode() {
@@ -419,8 +404,6 @@ impl Engine {
             self.chewing_editor.process_keyevent(pinyin::end_syllable());
         }
 
-        // Shift+Space switches it inside chewing.
-        let shape_mode = self.chewing_editor.editor_options().character_form;
         if text_action.is_some() {
             // do nothing, handled later
         } else if evt.ksym.is_unicode() {
@@ -571,10 +554,25 @@ impl Engine {
             }
         }
 
-        if self.chewing_editor.editor_options().character_form != shape_mode {
-            self.shape_mode_changed(ui)?;
-        }
+        self.show_edit(ui, text_action)
+    }
 
+    /// A click on the candidate list's `slot`: selects it as its key would.
+    pub(crate) fn select_candidate(&mut self, ui: &mut impl Frontend, slot: usize) -> Result<()> {
+        if !self.chewing_editor.is_selecting() {
+            return Ok(());
+        }
+        let Some(&index) = self.candidate_indices.get(slot) else {
+            return Ok(());
+        };
+        self.chewing_editor.select(index)?;
+        self.show_edit(ui, None)?;
+        Ok(())
+    }
+
+    /// Shows what chewing made of the last key, and types what it committed;
+    /// `text_action` is typed after it. Whether the key was taken.
+    fn show_edit(&mut self, ui: &mut impl Frontend, text_action: Option<String>) -> Result<bool> {
         let last_behavior = self.chewing_editor.last_key_behavior();
 
         if last_behavior == EditorKeyBehavior::Ignore {
@@ -723,11 +721,6 @@ impl Engine {
             ID_SWITCH_LANG => {
                 if let Err(error) = self.toggle_lang_mode(ui) {
                     error!("unable to toggle lang mode: {error}");
-                }
-            }
-            ID_SWITCH_SHAPE => {
-                if let Err(error) = self.toggle_shape_mode(ui) {
-                    error!("unable to toggle shape mode: {error}");
                 }
             }
             ID_MODE_ICON => {
@@ -950,29 +943,6 @@ impl Engine {
         ui.update_lang_buttons(self)
     }
 
-    fn toggle_shape_mode(&mut self, ui: &impl Frontend) -> Result<()> {
-        self.chewing_editor.set_editor_options(|opt| {
-            opt.character_form = match opt.character_form {
-                CharacterForm::Fullwidth => CharacterForm::Halfwidth,
-                CharacterForm::Halfwidth => CharacterForm::Fullwidth,
-            }
-        });
-        self.shape_mode_changed(ui)
-    }
-
-    /// From the menu, or Shift+Space, which chewing handles itself.
-    fn shape_mode_changed(&mut self, ui: &impl Frontend) -> Result<()> {
-        ui.update_lang_buttons(self)?;
-        if self.cfg.chewing_tsf.show_notification {
-            let msg = match self.chewing_editor.editor_options().character_form {
-                CharacterForm::Fullwidth => "全形",
-                CharacterForm::Halfwidth => "半形",
-            };
-            self.show_message(ui, msg, Duration::from_millis(500))?;
-        }
-        Ok(())
-    }
-
     /// Saved to the registry like the simplified switch, so every app types
     /// the same way; the others pick it up when they next get focus.
     fn toggle_pinyin(&mut self, ui: &impl Frontend) -> Result<()> {
@@ -1108,10 +1078,8 @@ impl Engine {
 
     /// Ticks the menu items of the settings that are on.
     pub(crate) fn check_menu_items(&self, menu: HMENU) {
-        let shape_mode = self.chewing_editor.editor_options().character_form;
         let cfg = &self.cfg.chewing_tsf;
         for (id, checked) in [
-            (ID_SWITCH_SHAPE, shape_mode == CharacterForm::Fullwidth),
             (ID_OUTPUT_SIMP_CHINESE, cfg.output_simp_chinese),
             (ID_OUTPUT_SIMP_VOCABULARY, cfg.output_simp_vocabulary),
         ] {
@@ -1151,7 +1119,10 @@ impl Engine {
             opt.esc_clear_all_buffer = cfg.esc_clean_all_buf;
             opt.space_is_select_key = cfg.show_cand_with_space_key;
             opt.disable_auto_learn_phrase = !cfg.enable_auto_learn;
-            opt.enable_fullwidth_toggle_key = cfg.enable_fullwidth_toggle_key;
+            // Chinese mode types fullwidth punctuation and English mode
+            // halfwidth; there is no switching between them. Chewing's
+            // default would take Shift+Space for it.
+            opt.enable_fullwidth_toggle_key = false;
             opt.sort_candidates_by_frequency = cfg.sort_candidates_by_frequency;
             // TODO experimental
             opt.auto_snapshot_selections = true;
@@ -1169,9 +1140,6 @@ impl Engine {
     /// Initializes the config to the user default
     fn apply_init_config(&mut self, ui: &impl Frontend) -> Result<()> {
         self.chewing_editor.set_editor_options(|opt| {
-            if self.cfg.chewing_tsf.default_full_space {
-                opt.character_form = CharacterForm::Fullwidth;
-            }
             opt.auto_commit_threshold = 50;
         });
 

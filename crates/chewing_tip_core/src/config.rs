@@ -44,7 +44,6 @@ pub struct Config {
 pub struct ChewingTsfConfig {
     pub switch_lang_with_shift: bool,
     pub shift_key_sensitivity: i32,
-    pub enable_fullwidth_toggle_key: bool,
     pub enable_caps_lock: bool,
     pub lock_chinese_on_caps_lock: bool,
     pub show_notification: bool,
@@ -60,7 +59,6 @@ pub struct ChewingTsfConfig {
     pub sort_candidates_by_frequency: bool,
     pub show_cand_with_space_key: bool,
     pub advance_after_selection: bool,
-    pub default_full_space: bool,
     pub default_english: bool,
     pub output_simp_chinese: bool,
     /// Simplified output also swaps Taiwanese terms for mainland ones (軟體→软件)
@@ -95,7 +93,6 @@ impl Default for ChewingTsfConfig {
         Self {
             switch_lang_with_shift: true,
             shift_key_sensitivity: 200,
-            enable_fullwidth_toggle_key: false,
             enable_caps_lock: false,
             lock_chinese_on_caps_lock: true,
             show_notification: true,
@@ -111,7 +108,6 @@ impl Default for ChewingTsfConfig {
             sort_candidates_by_frequency: false,
             show_cand_with_space_key: false,
             advance_after_selection: true,
-            default_full_space: false,
             default_english: false,
             output_simp_chinese: false,
             output_simp_vocabulary: false,
@@ -198,9 +194,6 @@ impl Config {
             }
             if let Ok(value) = reg_get_bool(&key, "DefaultEnglish") {
                 cfg.default_english = value;
-            }
-            if let Ok(value) = reg_get_bool(&key, "DefaultFullSpace") {
-                cfg.default_full_space = value;
             }
             if let Ok(value) = reg_get_bool(&key, "ShowCandWithSpaceKey") {
                 cfg.show_cand_with_space_key = value;
@@ -304,9 +297,6 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "UpperCaseWithShift") {
                 cfg.upper_case_with_shift = value;
             }
-            if let Ok(value) = reg_get_bool(&key, "EnableFullwidthToggleKey") {
-                cfg.enable_fullwidth_toggle_key = value;
-            }
             if let Ok(value) = key.get_u64("ModifiedTimestamp") {
                 cfg.modified_timestamp = value;
             }
@@ -363,7 +353,6 @@ impl Config {
         );
         let _ = reg_set_i32(&key, "CandPerRow", chewing_tsf.cand_per_row);
         let _ = reg_set_bool(&key, "DefaultEnglish", chewing_tsf.default_english);
-        let _ = reg_set_bool(&key, "DefaultFullSpace", chewing_tsf.default_full_space);
         let _ = reg_set_bool(
             &key,
             "ShowCandWithSpaceKey",
@@ -378,11 +367,6 @@ impl Config {
             &key,
             "ShiftKeySensitivity",
             chewing_tsf.shift_key_sensitivity,
-        );
-        let _ = reg_set_bool(
-            &key,
-            "EnableFullwidthToggleKey",
-            chewing_tsf.enable_fullwidth_toggle_key,
         );
         let _ = reg_set_bool(&key, "ShowNotification", chewing_tsf.show_notification);
         let _ = reg_set_bool(&key, "OutputSimpChinese", chewing_tsf.output_simp_chinese);

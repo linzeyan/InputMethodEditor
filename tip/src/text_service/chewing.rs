@@ -8,7 +8,6 @@ use std::rc::{Rc, Weak};
 use std::sync::atomic::Ordering;
 
 use anyhow::{Context, Result, bail};
-use chewing::editor::CharacterForm;
 use log::{debug, error, info};
 use scoped_error::expect_error;
 use scoped_error::impl_context_error;
@@ -51,7 +50,6 @@ use crate::text_service::icons::LangIconSet;
 use crate::text_service::lang_bar::LangBarFactory;
 
 const GUID_MODE_BUTTON: GUID = GUID::from_u128(0xD7F58996_ED24_4B6C_AAC6_2499672B9902);
-const GUID_SHAPE_TYPE_BUTTON: GUID = GUID::from_u128(0xD9D1C5FD_F180_4A43_B31B_975F0968AD7B);
 const GUID_SETTINGS_BUTTON: GUID = GUID::from_u128(0xFE45B830_ABF1_4BAA_9E25_1BCD2AA164E4);
 
 pub(crate) const CLSID_TEXT_SERVICE: GUID = GUID::from_u128(0xE0C45601_7E8F_4FEF_9871_8B0C785B9B48);
@@ -82,7 +80,6 @@ struct TsfUi {
     composition_sink: ITfCompositionSink,
 
     switch_lang_button: ComObject<LangBarButton>,
-    switch_shape_button: ComObject<LangBarButton>,
     ime_mode_button: ComObject<LangBarButton>,
 
     pending_lang_mode_change: Cell<bool>,
@@ -146,16 +143,6 @@ impl ChewingTextService {
             ID_SWITCH_LANG,
         )?;
 
-        info!("Add language bar buttons to toggle full shape/half shape modes");
-        let switch_shape_button = factory.create_button(
-            GUID_SHAPE_TYPE_BUTTON,
-            TF_LBI_STYLE_BTN_BUTTON,
-            IDS_SWITCH_SHAPE,
-            IDI_HALF_SHAPE,
-            HMENU::default(),
-            ID_SWITCH_SHAPE,
-        )?;
-
         info!("Add button for settings and others, may open a popup menu");
         let settings_button = factory.create_button(
             GUID_SETTINGS_BUTTON,
@@ -179,7 +166,6 @@ impl ChewingTextService {
 
         let lang_bar_buttons = vec![
             switch_lang_button.cast()?,
-            switch_shape_button.cast()?,
             settings_button.cast()?,
             ime_mode_button.cast()?,
         ];
@@ -195,7 +181,6 @@ impl ChewingTextService {
             has_focus: true,
             lang_bar_buttons,
             switch_lang_button,
-            switch_shape_button,
             ime_mode_button,
             composition: Default::default(),
             pending_edit: Weak::new(),
@@ -440,7 +425,13 @@ impl ChewingTextService {
                 ui: &mut self.ui,
                 context: None,
             };
-            self.engine.on_command(&mut ui, id);
+            if matches!(cmd_type, CommandType::Candidate) {
+                if let Err(error) = self.engine.select_candidate(&mut ui, id as usize) {
+                    error!("unable to select candidate {id}: {error:#}");
+                }
+            } else {
+                self.engine.on_command(&mut ui, id);
+            }
         }
     }
 
@@ -591,14 +582,6 @@ impl TsfUi {
         let _ = self
             .ime_mode_button
             .set_enabled(!engine.lang_mode.get().is_disabled());
-        // TODO extract shape mode change to dedicated method
-        let shape_mode = engine.chewing_editor.editor_options().character_form;
-        let icon = if shape_mode == CharacterForm::Fullwidth {
-            self.lang_icons.full_shape
-        } else {
-            self.lang_icons.half_shape
-        };
-        self.switch_shape_button.set_icon(icon)?;
         engine.check_menu_items(self.popup_menu);
         Ok(())
     }

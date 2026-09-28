@@ -51,11 +51,23 @@ pub(super) enum CommandType {
     LeftClick,
     RightClick,
     Menu,
+    /// A click on the candidate list; the id is the item's slot.
+    Candidate,
 }
 
 #[interface("f320f835-b95d-4d3f-89d5-fd4ab7b9d7bb")]
 pub(super) unsafe trait IFnRunCommand: IUnknown {
     fn on_command(&self, id: u32, cmd_type: CommandType);
+}
+
+/// Runs a command in this thread's text service, from a window of ours.
+pub(super) fn run_command(thread_mgr: &ITfThreadMgr, id: u32, cmd_type: CommandType) -> Result<()> {
+    unsafe {
+        let fn_provider = thread_mgr.GetFunctionProvider(&CHEWING_TSF_CLSID)?;
+        let punk = fn_provider.GetFunction(&GUID::zeroed(), &IFnRunCommand::IID)?;
+        punk.cast::<IFnRunCommand>()?.on_command(id, cmd_type);
+    }
+    Ok(())
 }
 
 #[implement(
