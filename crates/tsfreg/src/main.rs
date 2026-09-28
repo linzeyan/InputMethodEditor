@@ -8,7 +8,7 @@ use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use chewing_tip_core::PRODUCT_NAME;
+use chewing_tip_core::{PRODUCT_NAME, SETTINGS_EXE, SETTINGS_SCHEME};
 use chewing_tip_core::config::grant_app_container_access;
 use windows::{
     Win32::{
@@ -89,6 +89,14 @@ fn register_com_server(view: REG_SAM_FLAGS, dll: &Path) -> windows_registry::Res
     key.set_string("ThreadingModel", "Apartment")
 }
 
+fn register_settings_scheme(exe: &Path) -> windows_registry::Result<()> {
+    let key = LOCAL_MACHINE.create(format!(r"Software\Classes\{SETTINGS_SCHEME}"))?;
+    key.set_string("", format!("URL:{PRODUCT_NAME} 設定"))?;
+    key.set_string("URL Protocol", "")?;
+    key.create(r"shell\open\command")?
+        .set_string("", format!("\"{}\" \"%1\"", exe.display()))
+}
+
 /// On ARM64 Windows, x64 and ARM64 processes read the same 64-bit registry
 /// view, so the ARM64 package registers its native DLL there instead of x64.
 const NATIVE_DIR: &str = if cfg!(target_arch = "aarch64") {
@@ -101,7 +109,8 @@ fn register(root: &Path) -> Outcome {
     let native_dll = root.join(NATIVE_DIR).join("chewing_tip.dll");
     let x86_dll = root.join("x86").join("chewing_tip.dll");
     let icon = root.join(format!("{PRODUCT_NAME}.ico"));
-    for path in [&native_dll, &x86_dll, &icon] {
+    let settings = root.join(NATIVE_DIR).join(SETTINGS_EXE);
+    for path in [&native_dll, &x86_dll, &icon, &settings] {
         if !path.exists() {
             return Err(format!("找不到 {}", path.display()).into());
         }
@@ -161,6 +170,7 @@ fn register_machine(root: &Path) -> Step {
     // Both views: 32-bit apps load the x86 DLL through the WOW64 registry.
     register_com_server(KEY_WOW64_64KEY, &native_dll)?;
     register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
+    register_settings_scheme(&root.join(NATIVE_DIR).join(SETTINGS_EXE))?;
 
     unsafe {
         let input_processor_profile_mgr: ITfInputProcessorProfileMgr =
@@ -255,16 +265,17 @@ fn unregister() -> Outcome {
     // UnregisterProfile and UnregisterCategory delete only the leaf entries,
     // leaving the TIP's key tree behind in both registry views.
     for view in [KEY_WOW64_64KEY, KEY_WOW64_32KEY] {
-        for (parent, step) in [
-            (r"Software\Classes\CLSID", "COM 註冊"),
-            (r"SOFTWARE\Microsoft\CTF\TIP", "TSF 登錄"),
+        for (parent, name, step) in [
+            (r"Software\Classes\CLSID", CHEWING_TSF_CLSID_STR, "COM 註冊"),
+            (r"SOFTWARE\Microsoft\CTF\TIP", CHEWING_TSF_CLSID_STR, "TSF 登錄"),
+            (r"Software\Classes", SETTINGS_SCHEME, "設定程式連結"),
         ] {
             let removed = LOCAL_MACHINE
                 .options()
                 .write()
                 .access(view.0)
                 .open(parent)
-                .and_then(|key| key.remove_tree(CHEWING_TSF_CLSID_STR));
+                .and_then(|key| key.remove_tree(name));
             match removed {
                 // Already gone, e.g. a view the registration never wrote to.
                 Err(error) if error.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) => {}

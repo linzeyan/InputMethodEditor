@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+  "apps/settings/src-tauri",
   "crates/chewing_tip_core",
   "crates/tsfreg",
   "tip",

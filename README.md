@@ -8,10 +8,14 @@
 * 注音：新酷音的智慧選字、選字修正與自動學習，學到的詞所有程式共用
 * 正體／簡體輸出切換，可選擇只轉字形（軟體→软体）或連用語一起轉（軟體→软件）
 * 漢語拼音：連打不用分隔、簡拼，同樣會自動學習
+* 設定程式：候選字數、字型與顏色、鍵盤配置、快捷鍵、符號表等；按「套用」後，下一個按鍵就生效
 
 ## 系統需求
 
 Windows 10／11 x64。在 ARM64 版 Windows 上只能用於 x64／x86 程式。
+
+設定程式需要 WebView2 執行階段：Windows 11 內建，Windows 10 通常已隨 Edge 安裝；
+沒有的話從 [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/) 下載。
 
 ## 安裝
 
@@ -76,7 +80,7 @@ Windows 只從 HKLM 讀取輸入法的 COM 註冊，所以註冊需要一次系�
 | 空白（注音組字中） | 同上，改成一聲，例如「大」變「搭」；連按兩下則是插入空白，字不變 |
 
 中文模式打的標點是全形（，。？），英文模式是半形。
-在工作列輸入法的「中」圖示上按右鍵，可以查網路辭典、切換簡體輸出與大陸用語。注音／拼音與正體／簡體設定都是所有程式共用。
+在工作列輸入法的「中」圖示上按右鍵，可以開啟「設定」、查網路辭典、切換簡體輸出與大陸用語。注音／拼音與正體／簡體設定都是所有程式共用。
 注音的其他操作見右鍵選單的「新酷音使用說明」。
 
 ### 拼音
@@ -119,4 +123,6 @@ GPL-3.0-or-later。
 
 fork 自 [windows-chewing-tsf](https://codeberg.org/chewing/windows-chewing-tsf)
 （Kan-Ru Chen 與新酷音貢獻者），以上游 26.9.0（commit `40a665f`）為起點，
-上游的完整歷史請見原 repo。
+上游的完整歷史請見原 repo。設定程式（`apps/settings`）改自
+[windows-chewing-preferences](https://codeberg.org/chewing/windows-chewing-preferences)
+26.6.0.1（commit `141a10a`）。

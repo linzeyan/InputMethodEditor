@@ -40,7 +40,10 @@ pub struct Config {
     pub swkb_dat: String,
 }
 
+/// Defaults for missing fields, so that a settings file exported before a
+/// field was added still imports.
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ChewingTsfConfig {
     pub switch_lang_with_shift: bool,
     pub shift_key_sensitivity: i32,

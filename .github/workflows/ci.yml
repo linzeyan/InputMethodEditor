@@ -34,7 +34,7 @@ jobs:
           echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
       - name: Install build dependencies
         run: |
-          sudo dnf -y install clang rustup git msitools
+          sudo dnf -y install clang rustup git msitools nodejs npm
           rustup-init -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Setup rust targets

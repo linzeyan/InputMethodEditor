@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2025-2026 Chewing Project Authors
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "ime-settings"
+version.workspace = true
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "InputMethodEditorSettings"
+path = "src/main.rs"
+
+[dependencies]
+chewing_tip_core = { path = "../../../crates/chewing_tip_core" }
+log.workspace = true
+scoped-error.workspace = true
+serde.workspace = true
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+tauri-plugin-process = "2"
+toml = "0.9.5"
+windows = {
+  version = "0.61.0",
+  features = [
+    "Win32_Graphics_DirectWrite",
+  ]
+}
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }

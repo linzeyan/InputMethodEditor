@@ -16,6 +16,8 @@ use crate::flags::Dist;
 /// Keep in sync with `chewing_tip_core::PRODUCT_NAME`: tsfreg looks for
 /// `<PRODUCT_NAME>.ico` beside itself.
 const PRODUCT_NAME: &str = "InputMethodEditor";
+/// Keep in sync with `chewing_tip_core::SETTINGS_EXE`: tsfreg registers it.
+const SETTINGS_EXE: &str = "InputMethodEditorSettings.exe";
 
 #[derive(Debug)]
 pub(super) enum Target {
@@ -97,6 +99,18 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             "cargo build -p chewing_tip {release...} --target {x86_target}"
         )
         .run()?;
+        // The settings app embeds its web front end, so that is built first.
+        {
+            let _app = sh.push_dir("apps/settings");
+            cmd!(sh, "npm ci").run()?;
+            cmd!(sh, "npm run build").run()?;
+        }
+        // Without custom-protocol, Tauri loads the page from a dev server.
+        cmd!(
+            sh,
+            "cargo build -p ime-settings {release...} --target {native_target} --features tauri/custom-protocol"
+        )
+        .run()?;
 
         let dir = PathBuf::from("dist").join(package);
         sh.remove_path(&dir)?;
@@ -115,12 +129,18 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             dir.join(native_dir),
         )?;
         sh.copy_file(native_out.join("tsfreg.exe"), &dir)?;
+        // Beside the DLL too, which tsfreg registers it from. On gnu targets
+        // the WebView2 loader is a DLL, which its build script puts there.
+        for file in [SETTINGS_EXE, "WebView2Loader.dll"] {
+            sh.copy_file(native_out.join(file), dir.join(native_dir))?;
+        }
         // The release profile keeps debuginfo for crash analysis; with MSVC it
         // goes to a separate .pdb, but gnullvm embeds it in the binaries.
         if flags.release && matches!(flags.target, Some(Target::GnuLlvm)) {
             let binaries = [
                 dir.join(native_dir).join("chewing_tip.dll"),
                 dir.join(native_dir).join("InputMethodEditor.exe"),
+                dir.join(native_dir).join(SETTINGS_EXE),
                 dir.join("x86").join("chewing_tip.dll"),
                 dir.join("tsfreg.exe"),
             ];

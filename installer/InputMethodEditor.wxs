@@ -30,6 +30,8 @@
           <Directory Id="X64Dir" Name="x64">
             <Component Id="X64" Guid="*" Win64="yes">
               <File Id="x64dll" Source="x64/chewing_tip.dll" KeyPath="yes" />
+              <File Id="settings" Source="x64/InputMethodEditorSettings.exe" />
+              <File Id="webview2loader" Source="x64/WebView2Loader.dll" />
             </Component>
           </Directory>
           <Directory Id="X86Dir" Name="x86">

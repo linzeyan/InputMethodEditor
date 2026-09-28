@@ -7,12 +7,14 @@
 //! in a window of our own at its caret.
 
 use std::cell::RefCell;
+use std::process::Command;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
 use anyhow::{Result, ensure};
+use chewing_tip_core::SETTINGS_EXE;
 use log::{debug, error, info, warn};
 use logforth::record::{Level, LevelFilter};
 use windows::Win32::Foundation::{
@@ -60,7 +62,7 @@ use crate::engine::key_event::SystemKeyboardEvent;
 use crate::engine::{Engine, Frontend};
 use crate::text_service::icons::LangIconSet;
 use crate::text_service::menu::Menu;
-use crate::text_service::resources::{ID_SWITCH_LANG, IDR_MENU};
+use crate::text_service::resources::{ID_CONFIG, ID_SWITCH_LANG, IDR_MENU};
 use crate::text_service::ui_elements::{CandidateList, Notification, NotificationModel};
 use crate::ui::gfx::color_s;
 
@@ -745,6 +747,15 @@ fn show_menu(hwnd: HWND) {
     match command.0 as u32 {
         0 => {}
         ID_EXIT => unsafe { PostQuitMessage(0) },
+        // Started directly: the URL the DLL opens is only registered by
+        // tsfreg, and this process is our own rather than a sandboxed app.
+        ID_CONFIG => {
+            let started = std::env::current_exe()
+                .and_then(|exe| Command::new(exe.with_file_name(SETTINGS_EXE)).spawn());
+            if let Err(error) = started {
+                error!("unable to start the settings app: {error}");
+            }
+        }
         id => {
             with_state(|State { engine, ui }| engine.on_command(ui, id));
         }

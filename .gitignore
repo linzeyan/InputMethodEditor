@@ -1,5 +1,6 @@
 /build
 /dist
+/apps/*/dist
 /.cache
 /docs
 target

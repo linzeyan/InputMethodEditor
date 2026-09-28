@@ -30,6 +30,7 @@ use chewing::input::keymap::{
 use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE};
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable};
+use chewing_tip_core::SETTINGS_SCHEME;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use log::{debug, error, info};
@@ -744,6 +745,7 @@ impl Engine {
             ID_LITTLEDICT => open_url("https://dict.mini.moe.edu.tw/"),
             ID_PROVERBDICT => open_url("https://dict.idioms.moe.edu.tw/"),
             ID_CHEWING_HELP => open_url("https://chewing.im/features.html"),
+            ID_CONFIG => open_url(&format!("{SETTINGS_SCHEME}://open")),
             _ => {}
         }
     }
