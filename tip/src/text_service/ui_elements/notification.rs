@@ -32,9 +32,9 @@ use windows::Win32::{
     UI::{
         TextServices::{ITfThreadMgr, ITfUIElement, ITfUIElement_Impl, ITfUIElementMgr},
         WindowsAndMessaging::{
-            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, GetWindowRect, IDC_ARROW, IsWindowVisible,
-            KillTimer, LoadCursorW, RegisterClassExW, SetTimer, WINDOWPOS, WM_NCDESTROY, WM_PAINT,
-            WM_TIMER, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE,
+            CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, KillTimer, LoadCursorW,
+            RegisterClassExW, SetTimer, WINDOWPOS, WM_NCDESTROY, WM_PAINT, WM_TIMER,
+            WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE,
             WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
@@ -483,16 +483,7 @@ impl Notification {
     }
     /// Where the window is on screen, if it is shown.
     pub(crate) fn window_rect(&self) -> Option<RECT> {
-        let view = self.inner.view.borrow();
-        let hwnd = view.window()?.hwnd();
-        let mut rect = RECT::default();
-        unsafe {
-            if !IsWindowVisible(hwnd).as_bool() {
-                return None;
-            }
-            GetWindowRect(hwnd, &mut rect).ok()?;
-        }
-        Some(rect)
+        self.inner.view.borrow().window()?.visible_rect()
     }
 }
 

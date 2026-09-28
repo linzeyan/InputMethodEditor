@@ -7,11 +7,13 @@
 //! in a window of our own at its caret.
 
 use std::cell::RefCell;
-use std::sync::OnceLock;
 use std::sync::atomic::Ordering;
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Mutex, OnceLock};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
+use chewing::editor::CharacterForm;
 use log::{debug, error, info, warn};
 use logforth::record::{Level, LevelFilter};
 use windows::Win32::Foundation::{
@@ -19,9 +21,13 @@ use windows::Win32::Foundation::{
 };
 use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MapWindowPoints, MonitorFromWindow};
+use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
-use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
+use windows::Win32::System::Variant::VARIANT;
+use windows::Win32::UI::Accessibility::{
+    AccessibleObjectFromWindow, HWINEVENTHOOK, IAccessible, SetWinEventHook, UnhookWinEvent,
+};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, GetDpiForWindow,
     MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
@@ -38,16 +44,17 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::TextServices::ITfThreadMgr;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW,
+    AppendMenuW, CHILDID_SELF, CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW,
     EVENT_SYSTEM_FOREGROUND, GUITHREADINFO, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo,
     GetMessageW, GetWindowThreadProcessId, HC_ACTION, HICON, HMENU, KBDLLHOOKSTRUCT, MF_SEPARATOR,
-    MF_STRING, MSG, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow,
-    SetWindowsHookExW, TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN,
-    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
-    WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN,
-    WM_LBUTTONUP, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_POPUP,
+    MF_STRING, MSG, OBJID_CARET, PostMessageW, PostQuitMessage, RegisterClassExW,
+    RegisterWindowMessageW, SetForegroundWindow, SetWindowsHookExW, TPM_BOTTOMALIGN, TPM_NONOTIFY,
+    TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage,
+    UnhookWindowsHookEx, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT,
+    WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN, WM_LBUTTONUP, WM_RBUTTONUP, WM_SYSKEYDOWN,
+    WNDCLASSEXW, WS_POPUP,
 };
-use windows_core::{ComObject, HSTRING, PCWSTR, w};
+use windows_core::{ComObject, HSTRING, Interface, PCWSTR, w};
 
 use crate::com::G_HINSTANCE;
 use crate::engine::key_event::SystemKeyboardEvent;
@@ -61,8 +68,13 @@ use crate::ui::gfx::color_s;
 /// Marks the keys we send: they come back through the hook.
 const OUR_INPUT: usize = 0x494D_4521;
 const WM_TRAY: u32 = WM_APP + 1;
+/// `caret_worker` found where an app's caret is.
+const WM_CARET: u32 = WM_APP + 2;
 /// The menu resource's own commands start at 101.
 const ID_EXIT: u32 = 1;
+
+/// Where the caret last was in an app drawing its own, and in which window.
+static APP_CARET: Mutex<Option<(isize, RECT)>> = Mutex::new(None);
 
 struct State {
     engine: Engine,
@@ -292,20 +304,32 @@ fn send_text(text: &str) {
 }
 
 /// The caret of the window being typed into, in physical screen pixels.
-fn focus_caret() -> Result<RECT> {
+fn focus_caret(caret_requests: &Sender<isize>) -> Result<RECT> {
     unsafe {
         let mut info = GUITHREADINFO {
             cbSize: size_of::<GUITHREADINFO>() as u32,
             ..Default::default()
         };
-        let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let foreground = GetForegroundWindow();
+        let thread = GetWindowThreadProcessId(foreground, None);
         GetGUIThreadInfo(thread, &mut info)?;
         let hwnd = info.hwndCaret;
         if hwnd.is_invalid() {
-            // Apps drawing their own caret: the pointer is usually where the
-            // text field was clicked.
-            // ponytail: pointer fallback; UI Automation's caret range if it
-            // lands too far off in the apps that matter.
+            // Apps drawing their own caret (browsers, VS Code) say where it is
+            // when asked, which takes another thread. Until they answer: where
+            // the caret was last time, or the pointer, usually where the text
+            // field was clicked.
+            let focus = if info.hwndFocus.is_invalid() {
+                foreground
+            } else {
+                info.hwndFocus
+            };
+            let _ = caret_requests.send(focus.0 as isize);
+            if let Some((window, rect)) = *APP_CARET.lock().unwrap()
+                && window == focus.0 as isize
+            {
+                return Ok(rect);
+            }
             let mut point = POINT::default();
             GetCursorPos(&mut point)?;
             debug!("no system caret; using the pointer");
@@ -350,6 +374,49 @@ fn focus_caret() -> Result<RECT> {
     }
 }
 
+/// Asks apps drawing their own caret where it is, as magnifiers do: MSAA's
+/// caret object, which Chromium and VS Code answer. On a thread of its own
+/// because an app may take its time (VS Code took 200 ms while starting), and
+/// Windows drops a hook that keeps it waiting.
+fn caret_worker(requests: Receiver<isize>, window: isize) {
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    while let Ok(mut focus) = requests.recv() {
+        // Asked on every key: only the latest matters.
+        while let Ok(latest) = requests.try_recv() {
+            focus = latest;
+        }
+        match accessible_caret(HWND(focus as _)) {
+            Ok(rect) => {
+                debug!(rect:?; "accessible caret");
+                *APP_CARET.lock().unwrap() = Some((focus, rect));
+                let _ = unsafe {
+                    PostMessageW(Some(HWND(window as _)), WM_CARET, WPARAM(0), LPARAM(0))
+                };
+            }
+            Err(error) => debug!("no accessible caret: {error:#}"),
+        }
+    }
+}
+
+fn accessible_caret(window: HWND) -> Result<RECT> {
+    unsafe {
+        let mut object = std::ptr::null_mut();
+        AccessibleObjectFromWindow(window, OBJID_CARET.0 as u32, &IAccessible::IID, &mut object)?;
+        let caret = IAccessible::from_raw(object);
+        let (mut x, mut y, mut width, mut height) = (0, 0, 0, 0);
+        let child = VARIANT::from(CHILDID_SELF as i32);
+        caret.accLocation(&mut x, &mut y, &mut width, &mut height, &child)?;
+        // Empty when the window has no caret.
+        ensure!(height > 0, "empty");
+        Ok(RECT {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        })
+    }
+}
+
 /// How what is being typed looks: like the candidate list below it.
 #[derive(Default)]
 struct PreeditStyle {
@@ -370,6 +437,8 @@ struct HookUi {
     preedit: ComObject<Notification>,
     preedit_style: RefCell<PreeditStyle>,
     composing: bool,
+    /// To `caret_worker`: the windows to ask where their caret is.
+    caret_requests: Sender<isize>,
 }
 
 impl HookUi {
@@ -407,6 +476,9 @@ impl HookUi {
         }
         let preedit = Notification::new(HWND::default(), None)?;
         preedit.hide();
+        let (caret_requests, requests) = mpsc::channel();
+        let window_id = window.0 as isize;
+        std::thread::spawn(move || caret_worker(requests, window_id));
         let ui = HookUi {
             window,
             _menu: menu,
@@ -415,16 +487,17 @@ impl HookUi {
             preedit,
             preedit_style: Default::default(),
             composing: false,
+            caret_requests,
         };
         ui.add_tray_icon(ui.lang_icons.tc.light);
         Ok(ui)
     }
 
-    fn tray_icon(&self, icon: HICON) -> NOTIFYICONDATAW {
+    fn tray_icon(&self, icon: HICON, text: &str) -> NOTIFYICONDATAW {
         // Filled apart: the struct is packed on x86, where a reference into
         // it may be misaligned.
         let mut tip = [0; 128];
-        for (to, from) in tip.iter_mut().zip("InputMethodEditor".encode_utf16()) {
+        for (to, from) in tip.iter_mut().zip(text.encode_utf16()) {
             *to = from;
         }
         NOTIFYICONDATAW {
@@ -440,13 +513,20 @@ impl HookUi {
     }
 
     fn add_tray_icon(&self, icon: HICON) {
-        if !unsafe { Shell_NotifyIconW(NIM_ADD, &self.tray_icon(icon)) }.as_bool() {
+        let icon = self.tray_icon(icon, "InputMethodEditor");
+        if !unsafe { Shell_NotifyIconW(NIM_ADD, &icon) }.as_bool() {
             error!("unable to add the tray icon");
         }
     }
 
     fn remove_tray_icon(&self) {
-        let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &self.tray_icon(HICON::default())) };
+        let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &self.tray_icon(HICON::default(), "")) };
+    }
+
+    fn place_preedit(&self, caret: RECT) {
+        self.preedit.set_position(caret.left, caret.bottom);
+        // HACK set position again to use correct DPI setting
+        self.preedit.set_position(caret.left, caret.bottom);
     }
 }
 
@@ -466,7 +546,7 @@ impl Frontend for HookUi {
         {
             return Ok(rect);
         }
-        focus_caret()
+        focus_caret(&self.caret_requests)
     }
 
     fn popup_parent(&self) -> Result<HWND> {
@@ -512,10 +592,7 @@ impl Frontend for HookUi {
             border_color: style.border_color,
         });
         // Every time: the app's caret moves once it gets what was committed.
-        let rect = focus_caret()?;
-        self.preedit.set_position(rect.left, rect.bottom);
-        // HACK set position again to use correct DPI setting
-        self.preedit.set_position(rect.left, rect.bottom);
+        self.place_preedit(focus_caret(&self.caret_requests)?);
         self.preedit.show();
         self.composing = true;
         Ok(())
@@ -529,7 +606,12 @@ impl Frontend for HookUi {
 
     fn update_lang_buttons(&self, engine: &Engine) -> Result<()> {
         engine.check_menu_items(self.popup_menu);
-        let icon = self.tray_icon(engine.lang_icon(&self.lang_icons));
+        // The icon has room for 中／英 only.
+        let text = match engine.chewing_editor.editor_options().character_form {
+            CharacterForm::Fullwidth => "InputMethodEditor（全形）",
+            CharacterForm::Halfwidth => "InputMethodEditor",
+        };
+        let icon = self.tray_icon(engine.lang_icon(&self.lang_icons), text);
         if !unsafe { Shell_NotifyIconW(NIM_MODIFY, &icon) }.as_bool() {
             error!("unable to update the tray icon");
         }
@@ -564,8 +646,22 @@ extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM
             }
             LRESULT(0)
         }
+        WM_CARET => {
+            with_state(|State { ui, .. }| {
+                if ui.composing
+                    && let Some((_, rect)) = *APP_CARET.lock().unwrap()
+                {
+                    ui.place_preedit(rect);
+                }
+            });
+            LRESULT(0)
+        }
         _ if msg == taskbar_created => {
-            with_state(|State { engine, ui }| ui.add_tray_icon(engine.lang_icon(&ui.lang_icons)));
+            with_state(|State { engine, ui }| {
+                ui.add_tray_icon(engine.lang_icon(&ui.lang_icons));
+                // For the tip.
+                let _ = ui.update_lang_buttons(engine);
+            });
             LRESULT(0)
         }
         _ => unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) },

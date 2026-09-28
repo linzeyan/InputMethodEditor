@@ -419,6 +419,8 @@ impl Engine {
             self.chewing_editor.process_keyevent(pinyin::end_syllable());
         }
 
+        // Shift+Space switches it inside chewing.
+        let shape_mode = self.chewing_editor.editor_options().character_form;
         if text_action.is_some() {
             // do nothing, handled later
         } else if evt.ksym.is_unicode() {
@@ -567,6 +569,10 @@ impl Engine {
             if !key_handled {
                 self.chewing_editor.process_keyevent(evt);
             }
+        }
+
+        if self.chewing_editor.editor_options().character_form != shape_mode {
+            self.shape_mode_changed(ui)?;
         }
 
         let last_behavior = self.chewing_editor.last_key_behavior();
@@ -829,10 +835,19 @@ impl Engine {
                 bg_color: color_s(&self.cfg.chewing_tsf.notify_bg_color),
                 border_color: color_s(&self.cfg.chewing_tsf.notify_border_color),
             });
-            if let Ok(rect) = ui.caret_rect() {
-                notification.set_position(rect.left + 50, rect.bottom + 50);
+            let position = match self.candidate_list.as_ref().and_then(|c| c.window_rect()) {
+                // Below the candidate list, which is raised over anything in
+                // its way whenever it is redrawn.
+                Some(rect) => Some((rect.left, rect.bottom)),
+                None => ui
+                    .caret_rect()
+                    .ok()
+                    .map(|rect| (rect.left + 50, rect.bottom + 50)),
+            };
+            if let Some((x, y)) = position {
+                notification.set_position(x, y);
                 // HACK set position again to use correct DPI setting
-                notification.set_position(rect.left + 50, rect.bottom + 50);
+                notification.set_position(x, y);
             }
             notification.show();
             notification.set_timer(dur);
@@ -942,8 +957,19 @@ impl Engine {
                 CharacterForm::Halfwidth => CharacterForm::Fullwidth,
             }
         });
-        ui.update_lang_buttons(self)?;
+        self.shape_mode_changed(ui)
+    }
 
+    /// From the menu, or Shift+Space, which chewing handles itself.
+    fn shape_mode_changed(&mut self, ui: &impl Frontend) -> Result<()> {
+        ui.update_lang_buttons(self)?;
+        if self.cfg.chewing_tsf.show_notification {
+            let msg = match self.chewing_editor.editor_options().character_form {
+                CharacterForm::Fullwidth => "全形",
+                CharacterForm::Halfwidth => "半形",
+            };
+            self.show_message(ui, msg, Duration::from_millis(500))?;
+        }
         Ok(())
     }
 

@@ -12,7 +12,9 @@ use chewing::input::keysym::{Keysym, SYM_DOWN, SYM_LEFT, SYM_RETURN, SYM_RIGHT, 
 use log::{debug, error};
 use scoped_error::expect_error;
 use windows::Win32::{
-    Foundation::{E_FAIL, E_INVALIDARG, HINSTANCE, HWND, LPARAM, LRESULT, POINT, TRUE, WPARAM},
+    Foundation::{
+        E_FAIL, E_INVALIDARG, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM,
+    },
     Graphics::{
         Direct2D::{
             Common::{D2D_RECT_F, D2D1_COLOR_F},
@@ -671,6 +673,10 @@ impl CandidateList {
             window.refresh();
             window.show();
         }
+    }
+    /// Where the window is on screen, if it is shown.
+    pub(crate) fn window_rect(&self) -> Option<RECT> {
+        self.inner.view.borrow().window()?.visible_rect()
     }
 }
 

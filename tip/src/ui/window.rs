@@ -133,6 +133,18 @@ impl Window {
         }
     }
 
+    /// Where the window is on screen, if it is shown.
+    pub(crate) fn visible_rect(&self) -> Option<RECT> {
+        let mut rect = RECT::default();
+        unsafe {
+            if !IsWindowVisible(self.hwnd()).as_bool() {
+                return None;
+            }
+            GetWindowRect(self.hwnd(), &mut rect).ok()?;
+        }
+        Some(rect)
+    }
+
     pub(crate) fn refresh(&self) {
         unsafe {
             if !self.hwnd().is_invalid() {
