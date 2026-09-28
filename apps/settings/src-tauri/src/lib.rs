@@ -47,17 +47,18 @@ pub fn run() {
             let about_menu = SubmenuBuilder::new(app, "關於")
                 .text("about", "關於 InputMethodEditor")
                 .build()?;
-            let menu = if dictionary {
-                MenuBuilder::new(app).items(&[&about_menu]).build()?
+            let (import, export) = if dictionary {
+                ("匯入詞庫...", "匯出詞庫...")
             } else {
-                let file_menu = SubmenuBuilder::new(app, "檔案")
-                    .text("import", "匯入設定檔...")
-                    .text("export", "匯出設定檔...")
-                    .build()?;
-                MenuBuilder::new(app)
-                    .items(&[&file_menu, &about_menu])
-                    .build()?
+                ("匯入設定檔...", "匯出設定檔...")
             };
+            let file_menu = SubmenuBuilder::new(app, "檔案")
+                .text("import", import)
+                .text("export", export)
+                .build()?;
+            let menu = MenuBuilder::new(app)
+                .items(&[&file_menu, &about_menu])
+                .build()?;
             if let Some(window) = app.get_webview_window("main") {
                 if dictionary {
                     window.set_title("InputMethodEditor 使用者詞庫")?;
@@ -99,6 +100,8 @@ pub fn run() {
             start_page,
             dictionary::load,
             dictionary::save,
+            dictionary::import_entries,
+            dictionary::export_entries,
             dictionary::validate,
             dictionary::map_bopomofo,
         ])

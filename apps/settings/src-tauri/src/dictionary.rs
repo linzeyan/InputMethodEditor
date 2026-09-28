@@ -95,6 +95,19 @@ fn merge(mut disk: Vec<Entry>, loaded: &[Entry], edited: &[Entry]) -> (Vec<Entry
     (disk, removed)
 }
 
+/// Adds the words `imported` has that `entries` lacks. A word in both keeps
+/// the higher preference: then importing each computer's export on the
+/// other leaves both with the same dictionary.
+fn union(mut entries: Vec<Entry>, imported: Vec<Entry>) -> Vec<Entry> {
+    for entry in imported {
+        match entries.iter_mut().find(|e| e.key() == entry.key()) {
+            Some(e) => e.boost = e.boost.max(entry.boost),
+            None => entries.push(entry),
+        }
+    }
+    entries
+}
+
 /// The entries as loaded or last saved, to tell what was edited here.
 #[derive(Default)]
 pub(super) struct Loaded(Mutex<Vec<Entry>>);
@@ -143,6 +156,15 @@ fn replace_file(path: &Path, write: impl FnOnce(&mut BufWriter<File>) -> Result<
     Ok(())
 }
 
+/// In chewing's format, so an export is also a user_dict.csv, and the
+/// user_dict.csv of any chewing install can be imported.
+fn write_entries(writer: &mut impl Write, entries: &[Entry]) -> Result<()> {
+    for entry in entries {
+        writeln!(writer, "{},{},{}", entry.word, entry.bopomofo, entry.boost)?;
+    }
+    Ok(())
+}
+
 /// Removed words also leave the history: chewing still suggests the ones
 /// it counted there.
 fn forget(path: &Path, removed: &[Entry]) -> Result<()> {
@@ -180,10 +202,7 @@ pub(super) fn save(entries: Vec<Entry>, loaded: State<Loaded>) -> Result<Vec<Ent
         let disk = read_entries(&dir.join(USER_DICT))?;
         let (merged, removed) = merge(disk, loaded, &edited);
         replace_file(&dir.join(USER_DICT), |writer| {
-            for entry in &merged {
-                writeln!(writer, "{},{},{}", entry.word, entry.bopomofo, entry.boost)?;
-            }
-            Ok(())
+            write_entries(writer, &merged)
         })?;
         forget(&dir.join(HISTORY_DICT), &removed)?;
         // The IME rereads both files when it sees the settings change.
@@ -194,6 +213,30 @@ pub(super) fn save(entries: Vec<Entry>, loaded: State<Loaded>) -> Result<Vec<Ent
     let merged = inner(entries, &loaded).map_err(|e| format!("{:#}", e))?;
     *loaded = merged.clone();
     Ok(merged)
+}
+
+/// Returns the list with the file's words added; saving writes them.
+#[tauri::command]
+pub(super) fn import_entries(path: String, entries: Vec<Entry>) -> Result<Vec<Entry>, String> {
+    fn inner(path: &str, entries: Vec<Entry>) -> Result<Vec<Entry>> {
+        let imported = read_entries(Path::new(path))?
+            .into_iter()
+            .map(Entry::checked)
+            .collect::<Result<Vec<_>>>()?;
+        Ok(union(entries, imported))
+    }
+    inner(&path, entries).map_err(|e| format!("{:#}", e))
+}
+
+#[tauri::command]
+pub(super) fn export_entries(path: String, entries: Vec<Entry>) -> Result<(), String> {
+    fn inner(path: &str, entries: &[Entry]) -> Result<()> {
+        let mut writer = BufWriter::new(File::create(path)?);
+        write_entries(&mut writer, entries)?;
+        writer.flush()?;
+        Ok(())
+    }
+    inner(&path, &entries).map_err(|e| format!("{:#}", e))
 }
 
 #[tauri::command]
@@ -279,6 +322,20 @@ mod tests {
                 ]
         );
         assert!(removed == [entry("好", "ㄏㄠˇ", 10)]);
+    }
+
+    #[test]
+    fn importing_both_ways_leaves_the_same_dictionary() {
+        let home = vec![entry("測試", "ㄘㄜˋ ㄕˋ", 30), entry("好", "ㄏㄠˇ", 10)];
+        let work = vec![entry("測試", "ㄘㄜˋ ㄕˋ", 10), entry("詞", "ㄘˊ", 10)];
+        let at_home = union(home.clone(), work.clone());
+        let at_work = union(work, home);
+        for entry in &at_home {
+            assert!(at_work.contains(entry));
+        }
+        assert_eq!(at_home.len(), at_work.len());
+        assert!(at_home.contains(&entry("測試", "ㄘㄜˋ ㄕˋ", 30)));
+        assert_eq!(at_home.len(), 3);
     }
 
     #[test]

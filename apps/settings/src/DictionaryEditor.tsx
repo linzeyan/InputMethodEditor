@@ -29,7 +29,8 @@ import {
 import { useEffect, useState, useRef } from "react";
 import WordEditor from "./WordEditor";
 import { invoke } from "@tauri-apps/api/core";
-import { message } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
+import { message, open, save } from "@tauri-apps/plugin-dialog";
 
 const useStyles = makeStyles({
   root: {
@@ -121,12 +122,12 @@ function DictionaryEditor() {
 
   const toasterId = useId("toaster");
   const { dispatchToast } = useToastController(toasterId);
-  const saveComplete = () => {
+  const notify = (title: string) => {
     dispatchToast(
       <Toast>
-        <ToastTitle>存檔成功</ToastTitle>
+        <ToastTitle>{title}</ToastTitle>
       </Toast>,
-      { position: "bottom-end", intent: "success", timeout: 300 },
+      { position: "bottom-end", intent: "success", timeout: 2000 },
     );
   };
 
@@ -194,19 +195,61 @@ function DictionaryEditor() {
     setItemsView(view(nextItems, filter));
   };
 
-  const onSave = () => {
-    invoke("save", { entries: items })
+  const saveItems = (entries: DictionaryEntry[], done: string) =>
+    invoke("save", { entries })
       .then((value) => {
         const saved = value as DictionaryEntry[];
         setItems(saved);
         setItemsView(view(saved, filter));
         setSelected(undefined);
-        saveComplete();
+        notify(done);
       })
       .catch((e) => {
         message(e, { title: "錯誤", kind: "error" });
       });
-  };
+
+  const onSave = () => saveItems(items, "存檔成功");
+
+  useEffect(() => {
+    // Saved right away: this page doesn't warn about unsaved changes on
+    // closing, so an import waiting for 存檔 could be lost unnoticed.
+    const unlistenImport = listen("import", async () => {
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!path) {
+        return;
+      }
+      invoke("import_entries", { path, entries: items })
+        .then((value) => saveItems(value as DictionaryEntry[], "匯入完成"))
+        .catch((e) => {
+          message(
+            "無法匯入，請確認是新酷音的詞庫檔（每行：詞,注音,偏好程度）。\n\n" +
+              e,
+            { title: "錯誤", kind: "error" },
+          );
+        });
+    });
+    const unlistenExport = listen("export", async () => {
+      const path = await save({
+        defaultPath: "InputMethodEditor 使用者詞庫.csv",
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (!path) {
+        return;
+      }
+      invoke("export_entries", { path, entries: items })
+        .then(() => notify("匯出完成"))
+        .catch((e) => {
+          message("無法寫入檔案。\n\n" + e, { title: "錯誤", kind: "error" });
+        });
+    });
+    return () => {
+      unlistenImport.then((f) => f());
+      unlistenExport.then((f) => f());
+    };
+  }, [items, filter]);
 
   const onSearch = (_e: any, data: InputOnChangeData) => {
     setFilter(data.value);
@@ -304,7 +347,7 @@ function DictionaryEditor() {
           disabled={selected === undefined}
           word={selected !== undefined ? items[selected].word : ""}
           bopomofo={selected !== undefined ? items[selected].bopomofo : ""}
-          boost={selected !== undefined ? items[selected].boost: 0}
+          boost={selected !== undefined ? items[selected].boost : 0}
           onChange={onUpdate}
         />
       </div>
