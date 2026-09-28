@@ -15,10 +15,11 @@ use windows::{
         Foundation::ERROR_FILE_NOT_FOUND,
         Globalization::*,
         Security::Authorization::{SE_FILE_OBJECT, SE_REGISTRY_KEY},
-        Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ},
+        Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, GetDriveTypeW},
         System::{
             Com::*,
             Registry::{KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS},
+            WindowsProgramming::DRIVE_REMOTE,
         },
         UI::{Input::KeyboardAndMouse::HKL, TextServices::*, WindowsAndMessaging::*},
     },
@@ -68,6 +69,13 @@ fn is_admin_protected(root: &Path) -> bool {
         .any(|dir| root.starts_with(&format!("{}\\", dir.to_lowercase())))
 }
 
+fn is_network_drive(root: &Path) -> bool {
+    let Some(volume) = root.ancestors().last() else {
+        return false;
+    };
+    unsafe { GetDriveTypeW(&HSTRING::from(volume.as_os_str())) == DRIVE_REMOTE }
+}
+
 fn register_com_server(view: REG_SAM_FLAGS, dll: &Path) -> windows_registry::Result<()> {
     let key = LOCAL_MACHINE
         .options()
@@ -97,6 +105,18 @@ fn register(root: &Path) -> Outcome {
         if !path.exists() {
             return Err(format!("找不到 {}", path.display()).into());
         }
+    }
+    // Every app loads the DLL, including elevated and AppContainer ones that
+    // may not reach the share; and network folders take no ACL, which
+    // register_machine needs.
+    if is_network_drive(root) {
+        return Err(format!(
+            "資料夾在網路磁碟機上：\n{}\n\n\
+             請把整個資料夾複製到這台電腦（建議 C:\\Program Files\\{PRODUCT_NAME}），\
+             再從那裡執行 register.bat。",
+            root.display()
+        )
+        .into());
     }
 
     if !is_admin_protected(root) {
@@ -128,6 +148,16 @@ fn register_machine(root: &Path) -> Step {
     let x86_dll = root.join("x86").join("chewing_tip.dll");
     let icon = root.join(format!("{PRODUCT_NAME}.ico"));
 
+    // AppContainer processes (Start menu search, Store apps) cannot load the
+    // DLL or dictionary otherwise. Program Files already grants this. First,
+    // so a folder that takes no ACL leaves nothing half registered.
+    let root_path = HSTRING::from(root.as_os_str());
+    grant_app_container_access(
+        PCWSTR(root_path.as_ptr()),
+        SE_FILE_OBJECT,
+        (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0,
+    )?;
+
     // Both views: 32-bit apps load the x86 DLL through the WOW64 registry.
     register_com_server(KEY_WOW64_64KEY, &native_dll)?;
     register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
@@ -155,15 +185,6 @@ fn register_machine(root: &Path) -> Step {
             category_manager.RegisterCategory(&CHEWING_TSF_CLSID, tfcat, &CHEWING_TSF_CLSID)?;
         }
     }
-
-    // AppContainer processes (Start menu search, Store apps) cannot load the
-    // DLL or dictionary otherwise. Program Files already grants this.
-    let root_path = HSTRING::from(root.as_os_str());
-    grant_app_container_access(
-        PCWSTR(root_path.as_ptr()),
-        SE_FILE_OBJECT,
-        (FILE_GENERIC_READ | FILE_GENERIC_EXECUTE).0,
-    )?;
 
     #[cfg(feature = "nightly")]
     {
