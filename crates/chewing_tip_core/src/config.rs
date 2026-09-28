@@ -72,6 +72,9 @@ pub struct ChewingTsfConfig {
     /// Sound pairs pinyin takes as one, as the bits of chewing's
     /// `zhuyin::FUZZY_*`.
     pub fuzzy_pinyin: i32,
+    /// The shuangpin scheme pinyin is typed in: 1 to 4 are Xiaohe, Ziranma,
+    /// Microsoft and Sogou, 0 is full pinyin.
+    pub shuangpin: i32,
     pub sel_key_type: i32,
     pub conv_engine: i32,
     pub cand_per_row: i32,
@@ -119,6 +122,7 @@ impl Default for ChewingTsfConfig {
             output_simp_vocabulary: false,
             pinyin: false,
             fuzzy_pinyin: 0,
+            shuangpin: 0,
             sel_key_type: 0,
             conv_engine: 1,
             cand_per_row: 3,
@@ -225,6 +229,9 @@ impl Config {
             }
             if let Ok(value) = reg_get_i32(&key, "FuzzyPinyin") {
                 cfg.fuzzy_pinyin = value;
+            }
+            if let Ok(value) = reg_get_i32(&key, "Shuangpin") {
+                cfg.shuangpin = value;
             }
             if let Ok(value) = reg_get_bool(&key, "AddPhraseForward") {
                 cfg.add_phrase_forward = value;
@@ -387,6 +394,7 @@ impl Config {
         );
         let _ = reg_set_bool(&key, "Pinyin", chewing_tsf.pinyin);
         let _ = reg_set_i32(&key, "FuzzyPinyin", chewing_tsf.fuzzy_pinyin);
+        let _ = reg_set_i32(&key, "Shuangpin", chewing_tsf.shuangpin);
         let _ = reg_set_bool(&key, "AddPhraseForward", chewing_tsf.add_phrase_forward);
         let _ = reg_set_bool(
             &key,

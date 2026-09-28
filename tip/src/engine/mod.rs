@@ -6,6 +6,7 @@
 
 pub(crate) mod key_event;
 pub(crate) mod pinyin;
+pub(crate) mod shuangpin;
 
 use std::cell::Cell;
 use std::ffi::{OsString, c_void};
@@ -46,6 +47,7 @@ use zhconv::{Variant, zhconv};
 
 use self::key_event::{KeymapOp, SimulatedKeyboard, SystemKeyboardEvent};
 use self::pinyin::ContinuousPinyin;
+use self::shuangpin::{Scheme, Shuangpin};
 use crate::com::G_HINSTANCE;
 use crate::keybind::Keybinding;
 use crate::text_service::icons::LangIconSet;
@@ -400,7 +402,10 @@ impl Engine {
 
         if self.cfg.chewing_tsf.pinyin
             && self.chewing_editor.entering_syllable()
-            && !pinyin::takes(&evt)
+            && !match Scheme::from_config(self.cfg.chewing_tsf.shuangpin) {
+                Some(scheme) => shuangpin::takes(scheme, &evt),
+                None => pinyin::takes(&evt),
+            }
         {
             self.chewing_editor.process_keyevent(pinyin::end_syllable());
         }
@@ -988,7 +993,10 @@ impl Engine {
             0
         });
         if cfg.pinyin {
-            editor.set_syllable_editor(Box::new(ContinuousPinyin::default()));
+            editor.set_syllable_editor(match Scheme::from_config(cfg.shuangpin) {
+                Some(scheme) => Box::new(Shuangpin::new(scheme)),
+                None => Box::new(ContinuousPinyin::default()),
+            });
             // Typed without tones, a syllable has to match all of them, and an
             // initial alone every syllable it starts; only this engine does.
             editor.set_editor_options(|opt| {

@@ -16,7 +16,7 @@ use chewing::zhuyin::{
 };
 
 /// Every Hanyu pinyin syllable, ü spelled v (lue and nue as well).
-const SYLLABLES: &str = "
+pub(super) const SYLLABLES: &str = "
     a ai an ang ao
     ba bai ban bang bao bei ben beng bi bian biao bie bin bing bo bu
     ca cai can cang cao ce cen ceng cha chai chan chang chao che chen cheng chi chong chou
@@ -242,7 +242,7 @@ fn is_prefix(pinyin: &str) -> bool {
     with_spellings(|spellings| spellings.iter().any(|it| it.starts_with(pinyin)))
 }
 
-fn is_syllable(pinyin: &str) -> bool {
+pub(super) fn is_syllable(pinyin: &str) -> bool {
     with_spellings(|spellings| spellings.iter().any(|it| it == pinyin))
 }
 
@@ -253,7 +253,7 @@ fn is_syllable_or_initial(pinyin: &str) -> bool {
 /// The syllable `pinyin` stands for: a whole syllable is itself (whatever
 /// its tone), while an initial typed alone, or a syllable not typed to its
 /// end, stands for any syllable with that initial.
-fn to_syllable(pinyin: &str) -> Syllable {
+pub(super) fn to_syllable(pinyin: &str) -> Syllable {
     if is_syllable(pinyin) {
         return parse(pinyin);
     }

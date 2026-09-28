@@ -25,6 +25,7 @@ export type ChewingTsfConfig = {
   output_simp_vocabulary: boolean;
   pinyin: boolean;
   fuzzy_pinyin: number;
+  shuangpin: number;
   sel_key_type: number;
   conv_engine: number;
   cand_per_row: number;

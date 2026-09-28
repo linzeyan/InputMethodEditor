@@ -941,6 +941,9 @@ const FUZZY_FINALS: [string, number][] = [
   ["in = ing", 1 << 8],
 ];
 
+// Indexed by the config's shuangpin.
+const SHUANGPIN = ["全拼", "小鶴雙拼", "自然碼雙拼", "微軟雙拼", "搜狗雙拼"];
+
 const Pinyin = ({ config, styles, setConfig }) => {
   const fuzzy = ([label, bit]: [string, number]) => (
     <Checkbox
@@ -959,6 +962,24 @@ const Pinyin = ({ config, styles, setConfig }) => {
   );
   return (
     <div role="tabpanel" aria-labelledby="Pinyin" style={{ margin: "16px" }}>
+      <Field label="拼法：" style={{ marginBottom: "16px", width: "50%" }}>
+        <Dropdown
+          value={SHUANGPIN[config.shuangpin]}
+          selectedOptions={[config.shuangpin.toString()]}
+          onOptionSelect={(_ev, data) =>
+            setConfig({
+              ...config,
+              shuangpin: parseInt(data.optionValue || "0"),
+            } as ChewingTsfConfig)
+          }
+        >
+          {SHUANGPIN.map((name, index) => (
+            <Option key={index} value={index.toString()}>
+              {name}
+            </Option>
+          ))}
+        </Dropdown>
+      </Field>
       <Text>
         模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong
         也有「中」。只在拼音模式作用。
