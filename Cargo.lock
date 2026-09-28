@@ -486,14 +486,14 @@ dependencies = [
 
 [[package]]
 name = "chewing_tip"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "cc",
  "chewing",
  "chewing_tip_core",
  "embed-resource",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "log",
  "logforth",
  "scoped-error",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "chewing_tip_core"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "log",
  "scoped-error",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "ime-settings"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chewing",
@@ -4372,7 +4372,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsfreg"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "chewing_tip_core",
  "windows 0.62.2",
@@ -5394,7 +5394,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "indoc",
  "jiff",
