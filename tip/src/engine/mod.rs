@@ -29,7 +29,7 @@ use chewing::input::keymap::{
 };
 use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE};
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
-use chewing::zhuyin::{Bopomofo, Syllable};
+use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
 use chewing_tip_core::SETTINGS_SCHEME;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
@@ -981,6 +981,12 @@ impl Engine {
             self.keymap = sim.into();
         }
         let editor = &mut self.chewing_editor;
+        // Zhuyin spells each sound on its own key, so it has no use for them.
+        set_fuzzy_sounds(if cfg.pinyin {
+            cfg.fuzzy_pinyin as u32
+        } else {
+            0
+        });
         if cfg.pinyin {
             editor.set_syllable_editor(Box::new(ContinuousPinyin::default()));
             // Typed without tones, a syllable has to match all of them, and an

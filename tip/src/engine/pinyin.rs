@@ -3,13 +3,17 @@
 //! Hanyu pinyin typed without breaks: "nihao" is split into ni and hao while
 //! it is typed, so each syllable converts as soon as the next one starts.
 
+use std::cell::RefCell;
 use std::fmt::{self, Display};
 
 use chewing::editor::zhuyin_layout::{KeyBehavior, Pinyin, SyllableEditor};
 use chewing::input::KeyboardEvent;
 use chewing::input::keysym::{Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_ESC, SYM_SPACE};
 use chewing::syl;
-use chewing::zhuyin::{Bopomofo, Syllable};
+use chewing::zhuyin::{
+    Bopomofo, FUZZY_AN_ANG, FUZZY_C_CH, FUZZY_EN_ENG, FUZZY_F_H, FUZZY_IN_ING, FUZZY_N_L,
+    FUZZY_R_L, FUZZY_S_SH, FUZZY_Z_ZH, Syllable, fuzzy_sounds,
+};
 
 /// Every Hanyu pinyin syllable, ü spelled v (lue and nue as well).
 const SYLLABLES: &str = "
@@ -162,21 +166,95 @@ pub(super) fn end_syllable() -> KeyboardEvent {
     KeyboardEvent::builder().ksym(SYM_SPACE).build()
 }
 
+/// The fuzzy sound pairs as spelled.
+const FUZZY_SPELLINGS: [(u32, &str, &str); 9] = [
+    (FUZZY_Z_ZH, "z", "zh"),
+    (FUZZY_C_CH, "c", "ch"),
+    (FUZZY_S_SH, "s", "sh"),
+    (FUZZY_N_L, "n", "l"),
+    (FUZZY_F_H, "f", "h"),
+    (FUZZY_R_L, "r", "l"),
+    (FUZZY_AN_ANG, "an", "ang"),
+    (FUZZY_EN_ENG, "en", "eng"),
+    (FUZZY_IN_ING, "in", "ing"),
+];
+
+thread_local! {
+    /// What `spellings` last made, and for which fuzzy sounds.
+    static SPELLINGS: RefCell<Option<(u32, Vec<String>)>> = const { RefCell::new(None) };
+}
+
+/// Every syllable, and what the fuzzy sounds set make one: with r/l, len
+/// is ren (人) as someone who says so types it, though no syllable itself.
+/// libchewing spells it ㄌㄣ, which the fuzzy lookup takes for ㄖㄣ.
+fn with_spellings<T>(f: impl FnOnce(&[String]) -> T) -> T {
+    SPELLINGS.with_borrow_mut(|made| {
+        let sounds = fuzzy_sounds();
+        if made
+            .as_ref()
+            .is_none_or(|(made_for, _)| *made_for != sounds)
+        {
+            *made = Some((sounds, spellings(sounds)));
+        }
+        f(&made.as_ref().unwrap().1)
+    })
+}
+
+fn spellings(sounds: u32) -> Vec<String> {
+    let mut spellings: Vec<String> = SYLLABLES.split_whitespace().map(str::to_owned).collect();
+    for syllable in SYLLABLES.split_whitespace() {
+        let initial = INITIALS
+            .iter()
+            .filter(|it| syllable.starts_with(**it))
+            .max_by_key(|it| it.len())
+            .map_or("", |it| *it);
+        let rest = &syllable[initial.len()..];
+        for (sound, a, b) in FUZZY_SPELLINGS {
+            if sounds & sound == 0 {
+                continue;
+            }
+            // Initials are swapped whole (z for zh), finals at the end (in
+            // for ing, and ian for iang).
+            let other = if sound < FUZZY_AN_ANG {
+                [(a, b), (b, a)]
+                    .into_iter()
+                    .find(|(from, _)| initial == *from)
+                    .map(|(_, to)| format!("{to}{rest}"))
+            } else if let Some(stem) = rest.strip_suffix(b) {
+                Some(format!("{initial}{stem}{a}"))
+            } else {
+                rest.strip_suffix(a)
+                    .map(|stem| format!("{initial}{stem}{b}"))
+            };
+            // Only what libchewing spells: yuang isn't anything.
+            if let Some(other) = other
+                && !spellings.contains(&other)
+                && !parse(&other).is_empty()
+            {
+                spellings.push(other);
+            }
+        }
+    }
+    spellings
+}
+
 fn is_prefix(pinyin: &str) -> bool {
-    SYLLABLES
-        .split_whitespace()
-        .any(|syllable| syllable.starts_with(pinyin))
+    with_spellings(|spellings| spellings.iter().any(|it| it.starts_with(pinyin)))
+}
+
+fn is_syllable(pinyin: &str) -> bool {
+    with_spellings(|spellings| spellings.iter().any(|it| it == pinyin))
 }
 
 fn is_syllable_or_initial(pinyin: &str) -> bool {
-    INITIALS.contains(&pinyin) || SYLLABLES.split_whitespace().any(|it| it == pinyin)
+    INITIALS.contains(&pinyin) || is_syllable(pinyin)
 }
 
 /// The syllable `pinyin` stands for: a whole syllable is itself (whatever
 /// its tone), while an initial typed alone, or a syllable not typed to its
 /// end, stands for any syllable with that initial.
 fn to_syllable(pinyin: &str) -> Syllable {
-    if SYLLABLES.split_whitespace().any(|it| it == pinyin) {
+    if is_syllable(pinyin) {
         return parse(pinyin);
     }
     // zh, not z, in zhon.
@@ -214,6 +292,7 @@ mod tests {
     use chewing::lm::StaticDictBuilder;
     use chewing::syl;
     use chewing::zhuyin::Bopomofo as bpmf;
+    use chewing::zhuyin::{FUZZY_IN_ING, FUZZY_R_L, FUZZY_S_SH, FUZZY_Z_ZH, set_fuzzy_sounds};
 
     use super::{ContinuousPinyin, SYLLABLES, to_syllable};
 
@@ -306,5 +385,47 @@ mod tests {
             editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
         }
         assert_eq!(editor.display(), "你好");
+    }
+
+    #[test]
+    fn fuzzy_sounds_add_the_spellings_they_make() {
+        // len (人 said with l) is no syllable, so it can't end before shi.
+        assert_ne!(syllables("lenshi"), ["ㄌㄣ", "ㄕ"]);
+        set_fuzzy_sounds(FUZZY_R_L);
+        assert_eq!(syllables("lenshi"), ["ㄌㄣ", "ㄕ"]);
+        // 聽 and 雙 said without the ng and h.
+        set_fuzzy_sounds(FUZZY_IN_ING | FUZZY_S_SH);
+        assert_eq!(syllables("tinsuang"), ["ㄊㄧㄣ", "ㄙㄨㄤ"]);
+        // The spellings go with the sounds.
+        set_fuzzy_sounds(0);
+        assert_ne!(syllables("lenshi"), ["ㄌㄣ", "ㄕ"]);
+    }
+
+    #[test]
+    fn fuzzy_sounds_convert_the_other_of_a_pair() {
+        let mut strings = StringTableBuilder::new();
+        strings.insert("中");
+        let strings = strings.build();
+        let mut dict = StaticDictBuilder::new();
+        let zhong = syl![bpmf::ZH, bpmf::U, bpmf::ENG, bpmf::TONE1];
+        dict.insert(&[zhong], strings.get_wid("中").unwrap());
+        let mut editor = EditorBuilder::new()
+            .string_table(strings)
+            .static_dict(dict.build())
+            .build();
+        editor.set_editor_options(|opt| {
+            opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
+        });
+        editor.set_syllable_editor(Box::new(ContinuousPinyin::default()));
+        let type_zong = |editor: &mut chewing::editor::Editor| {
+            for ascii in *b"zong " {
+                editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+            }
+            editor.display()
+        };
+        assert_ne!(type_zong(&mut editor), "中");
+        editor.clear();
+        set_fuzzy_sounds(FUZZY_Z_ZH);
+        assert_eq!(type_zong(&mut editor), "中");
     }
 }

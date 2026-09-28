@@ -13,7 +13,7 @@ pub use self::migrate::should_migrate_from_v3;
 use std::collections::BTreeMap;
 use std::ops::Bound::{Excluded, Included, Unbounded};
 
-use crate::zhuyin::{Syllable, SyllableVec};
+use crate::zhuyin::{Syllable, SyllableVec, fuzzy_initials};
 
 /// Records whose syllables `query` can mean, one by one (see
 /// [`Syllable::fuzzy_matches`]).
@@ -26,10 +26,17 @@ pub(crate) fn fuzzy_records<'a, V>(
     let initial = query.first().map_or(0, |syl| syl.to_u16() >> 9 << 9);
     let bound = |value: u16| Syllable::try_from(value).map(|syl| [syl]);
     let (start, end) = (bound(initial), bound(initial + (1 << 9)));
-    let start = start
-        .as_ref()
-        .map_or(Unbounded, |start| Included(&start[..]));
-    let end = end.as_ref().map_or(Unbounded, |end| Excluded(&end[..]));
+    // A fuzzy initial (z for zh) matches keys sorted elsewhere; a user
+    // dictionary is small enough to go through whole.
+    let whole = fuzzy_initials();
+    let start = match &start {
+        Ok(start) if !whole => Included(&start[..]),
+        _ => Unbounded,
+    };
+    let end = match &end {
+        Ok(end) if !whole => Excluded(&end[..]),
+        _ => Unbounded,
+    };
     records
         .range::<[Syllable], _>((start, end))
         .filter(move |(syllables, _)| {
@@ -86,5 +93,13 @@ mod tests {
         );
         assert_eq!(matches(&records, &[syl![SH].abbreviate()]), ["書"]);
         assert!(matches(&records, &[]).is_empty());
+    }
+
+    #[test]
+    fn fuzzy_initials_find_records_under_the_other_initial() {
+        let records = BTreeMap::from([(key(&[syl![ZH, U, ENG, TONE1]]), "中")]);
+        assert!(matches(&records, &[syl![Z, U, ENG]]).is_empty());
+        crate::zhuyin::set_fuzzy_sounds(crate::zhuyin::FUZZY_Z_ZH);
+        assert_eq!(matches(&records, &[syl![Z, U, ENG]]), ["中"]);
     }
 }

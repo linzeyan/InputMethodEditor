@@ -316,6 +316,7 @@ function App() {
         <Tab value="1">打字行為</Tab>
         <Tab value="2">界面外觀</Tab>
         <Tab value="3">鍵盤設定</Tab>
+        <Tab value="pinyin">拼音</Tab>
         <Tab value="keybind">自訂快捷鍵</Tab>
         <Tab value="4">特殊符號</Tab>
         <Tab value="5">快捷符號</Tab>
@@ -350,6 +351,9 @@ function App() {
           setShowAdvanced={setShowAdvanced}
           setConfig={setConfig}
         />
+      )}
+      {selectedTab === "pinyin" && config && (
+        <Pinyin config={config} styles={styles} setConfig={setConfig} />
       )}
       {selectedTab === "4" && config && (
         <Symbols
@@ -921,6 +925,55 @@ const Layout = ({
     </div>
   </div>
 );
+
+// Bits of chewing's zhuyin::FUZZY_*.
+const FUZZY_INITIALS: [string, number][] = [
+  ["z = zh", 1 << 0],
+  ["c = ch", 1 << 1],
+  ["s = sh", 1 << 2],
+  ["n = l", 1 << 3],
+  ["f = h", 1 << 4],
+  ["r = l", 1 << 5],
+];
+const FUZZY_FINALS: [string, number][] = [
+  ["an = ang（含 ian = iang、uan = uang）", 1 << 6],
+  ["en = eng", 1 << 7],
+  ["in = ing", 1 << 8],
+];
+
+const Pinyin = ({ config, styles, setConfig }) => {
+  const fuzzy = ([label, bit]: [string, number]) => (
+    <Checkbox
+      key={bit}
+      label={label}
+      checked={(config.fuzzy_pinyin & bit) != 0}
+      onChange={(_ev, data) =>
+        setConfig({
+          ...config,
+          fuzzy_pinyin: data.checked
+            ? config.fuzzy_pinyin | bit
+            : config.fuzzy_pinyin & ~bit,
+        } as ChewingTsfConfig)
+      }
+    />
+  );
+  return (
+    <div role="tabpanel" aria-labelledby="Pinyin" style={{ margin: "16px" }}>
+      <Text>
+        模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong
+        也有「中」。只在拼音模式作用。
+      </Text>
+      <div className={styles.content} style={{ margin: "16px 0px" }}>
+        <div className={styles.column}>
+          <Field label="聲母">{FUZZY_INITIALS.map(fuzzy)}</Field>
+        </div>
+        <div className={styles.column}>
+          <Field label="韻母">{FUZZY_FINALS.map(fuzzy)}</Field>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 const Symbols = ({ styles, symbols_dat, setSymbolsDat }) => (
   <div className={styles.content} role="tabpanel" aria-labelledby="Symbols">

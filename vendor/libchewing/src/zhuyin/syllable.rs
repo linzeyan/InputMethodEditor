@@ -1,5 +1,6 @@
 use std::{
     borrow::Borrow,
+    cell::Cell,
     error::Error,
     fmt::{Debug, Display, Write},
     hash::Hash,
@@ -12,6 +13,42 @@ use std::{
 use scoped_error::{expect_error, impl_context_error};
 
 use super::{Bopomofo, BopomofoKind};
+
+// Sound pairs fuzzy lookups take as one, for speakers who don't tell them
+// apart; bits for set_fuzzy_sounds.
+pub const FUZZY_Z_ZH: u32 = 1 << 0;
+pub const FUZZY_C_CH: u32 = 1 << 1;
+pub const FUZZY_S_SH: u32 = 1 << 2;
+pub const FUZZY_N_L: u32 = 1 << 3;
+pub const FUZZY_F_H: u32 = 1 << 4;
+pub const FUZZY_R_L: u32 = 1 << 5;
+/// ian/iang and uan/uang too.
+pub const FUZZY_AN_ANG: u32 = 1 << 6;
+pub const FUZZY_EN_ENG: u32 = 1 << 7;
+pub const FUZZY_IN_ING: u32 = 1 << 8;
+const FUZZY_INITIALS: u32 = (1 << 6) - 1;
+
+thread_local! {
+    // Per thread, where an editor does its lookups: a lookup takes no
+    // options, and the IME has one setting for all its editors anyway.
+    static FUZZY_SOUNDS: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Sets the sound pairs [`Syllable::fuzzy_matches`] takes as one on this
+/// thread, as bits like [`FUZZY_Z_ZH`].
+pub fn set_fuzzy_sounds(sounds: u32) {
+    FUZZY_SOUNDS.set(sounds);
+}
+
+/// The sound pairs set on this thread.
+pub fn fuzzy_sounds() -> u32 {
+    FUZZY_SOUNDS.get()
+}
+
+/// Whether a fuzzy match may have another initial than the query.
+pub(crate) fn fuzzy_initials() -> bool {
+    FUZZY_SOUNDS.get() & FUZZY_INITIALS != 0
+}
 
 #[derive(Default, Clone, Copy)]
 pub struct SyllableVec {
@@ -300,21 +337,60 @@ impl Syllable {
     /// in [`FuzzyPartialPrefix`](crate::dictionary::LookupStrategy) lookups:
     /// itself when the query has a tone, any of its tones when not, and any
     /// syllable starting with an abbreviation. Pinyin y stands for ㄩ too
-    /// (yu, yuan), which the ㄧ it is kept as doesn't start.
+    /// (yu, yuan), which the ㄧ it is kept as doesn't start. Sounds set
+    /// with [`set_fuzzy_sounds`] count as the same.
     pub fn fuzzy_matches(&self, query: Syllable) -> bool {
+        let sounds = FUZZY_SOUNDS.get();
+        let this = self.merge_fuzzy_sounds(sounds);
+        let query = query.merge_fuzzy_sounds(sounds);
         if query.is_abbreviation() {
             let mut query = query;
             query.remove_tone();
-            self.starts_with(query)
+            this.starts_with(query)
                 || query.initial().is_none()
                     && query.medial() == Some(Bopomofo::I)
-                    && self.initial().is_none()
-                    && self.medial() == Some(Bopomofo::IU)
+                    && this.initial().is_none()
+                    && this.medial() == Some(Bopomofo::IU)
         } else if query.has_tone() {
-            *self == query
+            this == query
         } else {
-            self.to_u16() >> 3 == query.to_u16() >> 3
+            this.to_u16() >> 3 == query.to_u16() >> 3
         }
+    }
+    /// The syllable with each sound of a pair in `sounds` spelled as the
+    /// pair's other one, so both spellings compare equal: with z/zh, ㄓㄨㄥ
+    /// becomes ㄗㄨㄥ.
+    // ponytail: pairs are swapped in zhuyin, so r/l takes ㄖ (ri) for ㄌ
+    // rather than ㄌㄧ (li); spell ri out if someone misses it.
+    fn merge_fuzzy_sounds(mut self, sounds: u32) -> Syllable {
+        use Bopomofo::*;
+        let on = |pair| sounds & pair != 0;
+        let initial = match self.initial() {
+            Some(ZH) if on(FUZZY_Z_ZH) => Some(Z),
+            Some(CH) if on(FUZZY_C_CH) => Some(C),
+            Some(SH) if on(FUZZY_S_SH) => Some(S),
+            // With n/l as well, r, l and n are all one.
+            Some(R) if on(FUZZY_R_L) => Some(if on(FUZZY_N_L) { N } else { L }),
+            Some(L) if on(FUZZY_N_L) => Some(N),
+            Some(H) if on(FUZZY_F_H) => Some(F),
+            _ => None,
+        };
+        if let Some(initial) = initial {
+            self.update(initial);
+        }
+        let rime = match (self.medial(), self.rime()) {
+            (_, Some(ANG)) if on(FUZZY_AN_ANG) => Some(AN),
+            (Some(I), Some(ENG)) if on(FUZZY_IN_ING) => Some(EN),
+            // Pinyin en and eng, and wen and weng; ㄨㄣ and ㄨㄥ after an
+            // initial are un and ong, which don't sound alike.
+            (None, Some(ENG)) if on(FUZZY_EN_ENG) => Some(EN),
+            (Some(U), Some(ENG)) if on(FUZZY_EN_ENG) && !self.has_initial() => Some(EN),
+            _ => None,
+        };
+        if let Some(rime) = rime {
+            self.update(rime);
+        }
+        self
     }
     /// Returns the `Syllable` encoded in a u16 integer.
     ///
@@ -700,6 +776,31 @@ mod test {
         assert!(!syl![M, A, TONE4].fuzzy_matches(syl![M, A, TONE3]));
         // The mark shows as no tone.
         assert_eq!(syl![ZH].abbreviate().to_string(), "ㄓ");
+    }
+
+    #[test]
+    fn fuzzy_sounds_match_either_of_a_pair() {
+        use super::*;
+        use Bopomofo::*;
+        // 中 typed zong, or 宗 typed zhong: only with z/zh.
+        assert!(!syl![ZH, U, ENG, TONE1].fuzzy_matches(syl![Z, U, ENG]));
+        set_fuzzy_sounds(FUZZY_Z_ZH | FUZZY_IN_ING | FUZZY_R_L | FUZZY_N_L);
+        assert!(syl![ZH, U, ENG, TONE1].fuzzy_matches(syl![Z, U, ENG]));
+        assert!(syl![Z, U, ENG, TONE1].fuzzy_matches(syl![ZH, U, ENG, TONE1]));
+        assert!(syl![ZH, U, ENG, TONE1].fuzzy_matches(syl![Z].abbreviate()));
+        assert!(!syl![CH, U, ENG, TONE2].fuzzy_matches(syl![C, U, ENG]));
+        // 應 typed yin; ㄥ after no medial is en/eng, not on here.
+        assert!(syl![I, ENG, TONE1].fuzzy_matches(syl![I, EN]));
+        assert!(!syl![F, ENG, TONE1].fuzzy_matches(syl![F, EN]));
+        // r/l with n/l: 然 typed nan.
+        assert!(syl![R, AN, TONE2].fuzzy_matches(syl![N, AN]));
+        assert!(fuzzy_initials());
+        set_fuzzy_sounds(FUZZY_EN_ENG | FUZZY_AN_ANG);
+        assert!(!fuzzy_initials());
+        // 翁 typed wen, 江 typed jian; 東 isn't dun.
+        assert!(syl![U, ENG, TONE1].fuzzy_matches(syl![U, EN]));
+        assert!(syl![J, I, ANG, TONE1].fuzzy_matches(syl![J, I, AN]));
+        assert!(!syl![D, U, ENG, TONE1].fuzzy_matches(syl![D, U, EN]));
     }
 
     #[test]

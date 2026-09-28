@@ -69,6 +69,9 @@ pub struct ChewingTsfConfig {
     pub output_simp_vocabulary: bool,
     /// Typing Hanyu pinyin instead of zhuyin.
     pub pinyin: bool,
+    /// Sound pairs pinyin takes as one, as the bits of chewing's
+    /// `zhuyin::FUZZY_*`.
+    pub fuzzy_pinyin: i32,
     pub sel_key_type: i32,
     pub conv_engine: i32,
     pub cand_per_row: i32,
@@ -115,6 +118,7 @@ impl Default for ChewingTsfConfig {
             output_simp_chinese: false,
             output_simp_vocabulary: false,
             pinyin: false,
+            fuzzy_pinyin: 0,
             sel_key_type: 0,
             conv_engine: 1,
             cand_per_row: 3,
@@ -218,6 +222,9 @@ impl Config {
             }
             if let Ok(value) = reg_get_bool(&key, "Pinyin") {
                 cfg.pinyin = value;
+            }
+            if let Ok(value) = reg_get_i32(&key, "FuzzyPinyin") {
+                cfg.fuzzy_pinyin = value;
             }
             if let Ok(value) = reg_get_bool(&key, "AddPhraseForward") {
                 cfg.add_phrase_forward = value;
@@ -379,6 +386,7 @@ impl Config {
             chewing_tsf.output_simp_vocabulary,
         );
         let _ = reg_set_bool(&key, "Pinyin", chewing_tsf.pinyin);
+        let _ = reg_set_i32(&key, "FuzzyPinyin", chewing_tsf.fuzzy_pinyin);
         let _ = reg_set_bool(&key, "AddPhraseForward", chewing_tsf.add_phrase_forward);
         let _ = reg_set_bool(
             &key,
