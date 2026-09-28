@@ -23,9 +23,7 @@ pub(crate) fn fuzzy_records<'a, V>(
 ) -> impl Iterator<Item = (&'a SyllableVec, &'a V)> + 'a {
     // Syllables sort by initial first, so only keys whose first syllable
     // has the query's initial need a look. Those without one sort first.
-    let initial = query
-        .first()
-        .map_or(0, |syl| syl.to_u16() & 0b0111111_00_0000_000);
+    let initial = query.first().map_or(0, |syl| syl.to_u16() >> 9 << 9);
     let bound = |value: u16| Syllable::try_from(value).map(|syl| [syl]);
     let (start, end) = (bound(initial), bound(initial + (1 << 9)));
     let start = start

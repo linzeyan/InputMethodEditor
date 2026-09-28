@@ -383,6 +383,17 @@ impl HistoryDict {
             .retain(|(prev, cur), _| *prev != wid && *cur != wid);
         lock.bigram_totals.remove(&wid);
     }
+    /// Unigrams `syllables` can mean in a fuzzy lookup: each word with the
+    /// syllables it is stored under.
+    pub(crate) fn fuzzy_readings(&self, syllables: &[Syllable]) -> Vec<(Vec<Syllable>, WordId)> {
+        let lock = self
+            .inner
+            .read()
+            .expect("Unable to acquire HistoryDict reader lock");
+        super::fuzzy_records(&lock.unigrams, syllables)
+            .flat_map(|(key, entries)| entries.iter().map(|e| (key.to_vec(), e.wid)))
+            .collect()
+    }
     // Return all words and their history based unigram log10 prob
     pub(crate) fn unigram(
         &self,

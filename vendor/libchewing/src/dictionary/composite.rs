@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::{
     dictionary::LookupStrategy,
     lm::StaticDict,
-    model::Candidate,
+    model::{Candidate, WordId},
     user::{HistoryDict, UserDict},
     zhuyin::Syllable,
 };
@@ -36,6 +36,16 @@ impl CompositeDict {
                 user_dict,
             }),
         }
+    }
+
+    /// Words `syllables` can mean in a fuzzy lookup, each with the syllables
+    /// the static, rare or user dictionary spells it with.
+    pub(crate) fn fuzzy_readings(&self, syllables: &[Syllable]) -> Vec<(Vec<Syllable>, WordId)> {
+        let strategy = LookupStrategy::FuzzyPartialPrefix;
+        let mut readings = self.inner.static_dict.lookup_readings(syllables, strategy);
+        readings.extend(self.inner.rare_dict.lookup_readings(syllables, strategy));
+        readings.extend(self.inner.user_dict.fuzzy_readings(syllables));
+        readings
     }
 
     pub fn lookup(&self, syllables: &[Syllable], strategy: LookupStrategy) -> Vec<Candidate> {

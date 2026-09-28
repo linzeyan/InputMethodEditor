@@ -145,6 +145,19 @@ impl StaticDict {
     }
 
     pub(crate) fn lookup(&self, syllables: &[Syllable], strategy: LookupStrategy) -> Vec<WordId> {
+        self.lookup_readings(syllables, strategy)
+            .into_iter()
+            .map(|(_, wid)| wid)
+            .collect()
+    }
+
+    /// Like [`lookup`](Self::lookup), with the syllables each word is spelled
+    /// with, which fuzzy lookups don't give.
+    pub(crate) fn lookup_readings(
+        &self,
+        syllables: &[Syllable],
+        strategy: LookupStrategy,
+    ) -> Vec<(Vec<Syllable>, WordId)> {
         let dict = self.inner.index.as_ref();
         let data = self.inner.words.as_ref();
 
@@ -171,19 +184,23 @@ impl StaticDict {
         };
 
         // Perform a BFS search to find all leaf nodes
-        let mut threads: VecDeque<TrieNodeView<'_>> = VecDeque::new();
-        threads.push_back(root);
+        let mut threads: VecDeque<(TrieNodeView<'_>, Vec<Syllable>)> = VecDeque::new();
+        threads.push_back((root, vec![]));
         for syl in syllables {
             debug_assert!(syl.to_u16() != 0);
             for _ in 0..threads.len() {
-                let node = threads.pop_front().unwrap();
+                let (node, path) = threads.pop_front().unwrap();
                 bail_if_oob!(node.child_begin(), node.child_end(), dict.len());
                 let child_nodes = dict[node.child_begin()..node.child_end()]
                     .chunks_exact(TrieNodeView::SIZE)
                     .map(TrieNodeView);
                 for n in child_nodes {
-                    if search_predicate(n.syllable(), syl) {
-                        threads.push_back(n);
+                    if search_predicate(n.syllable(), syl)
+                        && let Ok(syllable) = Syllable::try_from(n.syllable())
+                    {
+                        let mut path = path.clone();
+                        path.push(syllable);
+                        threads.push_back((n, path));
                     }
                 }
             }
@@ -194,7 +211,7 @@ impl StaticDict {
 
         // Collect result from all threads
         let mut result = vec![];
-        for node in threads.into_iter() {
+        for (node, path) in threads.into_iter() {
             bail_if_oob!(node.child_begin(), node.child_end(), dict.len());
             let leaf_data = &dict[node.child_begin()..];
             bail_if_oob!(0, TrieLeafView::SIZE, leaf_data.len());
@@ -204,7 +221,10 @@ impl StaticDict {
                 continue;
             }
             bail_if_oob!(leaf.data_begin(), leaf.data_end(), data.len());
-            result.extend(WordsIter::new(&data[leaf.data_begin()..leaf.data_end()]));
+            result.extend(
+                WordsIter::new(&data[leaf.data_begin()..leaf.data_end()])
+                    .map(|wid| (path.clone(), wid)),
+            );
         }
         result
     }

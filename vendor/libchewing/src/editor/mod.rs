@@ -439,7 +439,12 @@ impl Editor {
         syllables: &[Syllable],
         phrase: &str,
     ) -> Result<(), EditorError> {
-        self.shared.learn_phrase(syllables, phrase)
+        let Some(syllables) = self.shared.reading(syllables, phrase) else {
+            return expect_error("Failed to learn phrase", || {
+                bail!("no reading of {phrase} matches {syllables:?}");
+            });
+        };
+        self.shared.learn_phrase(&syllables, phrase)
     }
     pub fn unlearn_phrase(
         &mut self,
@@ -789,6 +794,35 @@ impl SharedState {
     fn cursor(&self) -> usize {
         self.com.cursor()
     }
+    /// The syllables to learn `phrase` under. Pinyin types syllables without
+    /// tones, or only their initials; stored so, a word would come up in
+    /// zhuyin, where tone 1 has no tone mark. So the dictionaries tell: the
+    /// whole phrase first, then each character of one put together from
+    /// single ones.
+    fn reading(&self, syllables: &[Syllable], phrase: &str) -> Option<Vec<Syllable>> {
+        if self.options.conversion_engine != ConversionEngineKind::FuzzyChewingEngine {
+            return Some(syllables.to_vec());
+        }
+        let find = |syllables: &[Syllable], text: &str| {
+            self.dict
+                .fuzzy_readings(syllables)
+                .into_iter()
+                .find(|(_, wid)| self.string_table.get_text(*wid).as_deref() == Some(text))
+                .map(|(reading, _)| reading)
+        };
+        if let Some(reading) = find(syllables, phrase) {
+            return Some(reading);
+        }
+        let chars: Vec<&str> = phrase.as_bytes().graphemes().collect();
+        if chars.len() < 2 || chars.len() != syllables.len() {
+            return None;
+        }
+        syllables
+            .iter()
+            .zip(chars)
+            .map(|(syllable, char)| find(&[*syllable], char).map(|reading| reading[0]))
+            .collect()
+    }
     fn learn_phrase_in_range_notify(
         &mut self,
         start: usize,
@@ -832,6 +866,9 @@ impl SharedState {
             .skip(start)
             .take(end - start)
             .collect::<String>();
+        let Some(syllables) = self.reading(&syllables, &phrase) else {
+            return Err("加詞失敗：找不到讀音".to_owned());
+        };
         if self
             .user_dict
             .lookup(&syllables, LookupStrategy::Standard)
@@ -879,8 +916,19 @@ impl SharedState {
         })
     }
     fn unlearn_phrase(&mut self, syllables: &[Syllable], phrase: &str) -> Result<(), EditorError> {
-        self.user_dict.remove(syllables, phrase);
-        self.hist_dict.remove(syllables, phrase);
+        if self.options.conversion_engine == ConversionEngineKind::FuzzyChewingEngine {
+            // Stored under the real syllables (see reading), or as typed
+            // before that; a fuzzy lookup finds both.
+            for (key, _) in self.user_dict.fuzzy_readings(syllables) {
+                self.user_dict.remove(&key, phrase);
+            }
+            for (key, _) in self.hist_dict.fuzzy_readings(syllables) {
+                self.hist_dict.remove(&key, phrase);
+            }
+        } else {
+            self.user_dict.remove(syllables, phrase);
+            self.hist_dict.remove(syllables, phrase);
+        }
         self.dirty_level += 1;
         Ok(())
     }
@@ -948,7 +996,9 @@ impl SharedState {
         let g = self.hist_dict.new_gen();
         let mut prev: Option<String> = None;
         for (syllables, word) in collect_new_phrases(intervals, self.com.symbols()) {
-            self.hist_dict.observe_unigram(g, &syllables, &word);
+            if let Some(syllables) = self.reading(&syllables, &word) {
+                self.hist_dict.observe_unigram(g, &syllables, &word);
+            }
             if let Some(prev) = prev {
                 self.hist_dict.observe_bigram(g, &prev, &word);
             }
@@ -1907,7 +1957,7 @@ mod tests {
     use crate::dictionary::StringTable;
     use crate::dictionary::StringTableBuilder;
     use crate::editor::SymbolSelector;
-    use crate::editor::{EditorBuilder, LanguageMode};
+    use crate::editor::{ConversionEngineKind, EditorBuilder, LanguageMode};
     use crate::lm::StaticDictBuilder;
     use crate::user::UserDict;
     use crate::{
@@ -1919,7 +1969,7 @@ mod tests {
             keysym,
         },
         syl,
-        zhuyin::Bopomofo as bpmf,
+        zhuyin::{Bopomofo as bpmf, Syllable},
     };
 
     const CAPSLOCK_EVENT: KeyboardEvent = KeyboardEvent::builder()
@@ -2628,5 +2678,58 @@ mod tests {
         // Two codepoints but only one character, so it cannot match two
         // syllables
         assert!(editor.learn_phrase(&syllables, IVS_CE).is_err());
+    }
+
+    #[test]
+    fn pinyin_learns_phrases_under_their_real_syllables() {
+        let mut builder = StringTableBuilder::new();
+        for word in ["中", "國", "鍋", "中國", "果"] {
+            builder.insert(word);
+        }
+        let st = builder.build();
+        let zhong = syl![bpmf::ZH, bpmf::U, bpmf::ENG];
+        let guo = syl![bpmf::G, bpmf::U, bpmf::O];
+        let guo2 = syl![bpmf::G, bpmf::U, bpmf::O, bpmf::TONE2];
+        let mut dict_builder = StaticDictBuilder::new();
+        dict_builder.insert(&[zhong], st.get_wid("中").unwrap());
+        dict_builder.insert(&[guo2], st.get_wid("國").unwrap());
+        dict_builder.insert(&[guo], st.get_wid("鍋").unwrap());
+        dict_builder.insert(&[zhong, guo2], st.get_wid("中國").unwrap());
+        let user_dict = UserDict::new(st.clone());
+        let mut editor = EditorBuilder::new()
+            .string_table(st.clone())
+            .static_dict(dict_builder.build())
+            .user_dict(user_dict.clone())
+            .build();
+        editor.set_editor_options(|opt| {
+            opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
+        });
+        let learned = |syllables: &[Syllable]| {
+            user_dict
+                .lookup(syllables, LookupStrategy::Standard)
+                .into_iter()
+                .map(|(wid, _)| st.get_text(wid).unwrap())
+                .collect::<Vec<_>>()
+        };
+
+        // Pinyin has no tones, so zhongguo comes in as ㄓㄨㄥ ㄍㄨㄛ. Stored
+        // so, 中國 would come up for zhuyin ㄓㄨㄥ ㄍㄨㄛ (中鍋), where tone
+        // 1 has no mark.
+        editor.learn_phrase(&[zhong, guo], "中國").unwrap();
+        assert!(learned(&[zhong, guo]).is_empty());
+        assert_eq!(learned(&[zhong, guo2]), ["中國"]);
+
+        // Put together from single characters, each tells its own reading.
+        editor.learn_phrase(&[zhong, guo], "中鍋").unwrap();
+        assert_eq!(learned(&[zhong, guo]), ["中鍋"]);
+
+        // No reading to store it under.
+        assert!(editor.learn_phrase(&[zhong, guo], "中果").is_err());
+
+        // Unlearning also drops what older versions stored as typed.
+        user_dict.insert(&[zhong, guo], "中國");
+        editor.unlearn_phrase(&[zhong, guo], "中國").unwrap();
+        assert!(learned(&[zhong, guo2]).is_empty());
+        assert_eq!(learned(&[zhong, guo]), ["中鍋"]);
     }
 }

@@ -191,6 +191,17 @@ impl UserDict {
             word_entries.remove(pos);
         }
     }
+    /// Records `syllables` can mean in a fuzzy lookup: each word with the
+    /// syllables it is stored under.
+    pub(crate) fn fuzzy_readings(&self, syllables: &[Syllable]) -> Vec<(Vec<Syllable>, WordId)> {
+        let lock = self
+            .inner
+            .read()
+            .expect("Unable to acquire UserDict reader lock");
+        super::fuzzy_records(&lock.records, syllables)
+            .flat_map(|(key, entries)| entries.iter().map(|e| (key.to_vec(), e.wid)))
+            .collect()
+    }
     pub fn lookup(&self, syllables: &[Syllable], strategy: LookupStrategy) -> Vec<(WordId, i8)> {
         let lock = self
             .inner
