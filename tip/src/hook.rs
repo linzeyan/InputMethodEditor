@@ -21,6 +21,7 @@ use windows::Win32::Graphics::Direct2D::Common::D2D1_COLOR_F;
 use windows::Win32::Graphics::Gdi::{MONITOR_DEFAULTTONEAREST, MapWindowPoints, MonitorFromWindow};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::HiDpi::{
     DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForMonitor, GetDpiForWindow,
     MDT_EFFECTIVE_DPI, SetProcessDpiAwarenessContext,
@@ -37,12 +38,13 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::TextServices::ITfThreadMgr;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW, GUITHREADINFO,
-    GetCursorPos, GetForegroundWindow, GetGUIThreadInfo, GetMessageW, GetWindowThreadProcessId,
-    HC_ACTION, HICON, HMENU, KBDLLHOOKSTRUCT, MF_SEPARATOR, MF_STRING, MSG, PostQuitMessage,
-    RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow, SetWindowsHookExW,
-    TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON, TrackPopupMenu,
-    TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WINDOW_EX_STYLE, WM_APP, WM_KEYDOWN,
+    AppendMenuW, CallNextHookEx, CreateWindowExW, DefWindowProcW, DispatchMessageW,
+    EVENT_SYSTEM_FOREGROUND, GUITHREADINFO, GetCursorPos, GetForegroundWindow, GetGUIThreadInfo,
+    GetMessageW, GetWindowThreadProcessId, HC_ACTION, HICON, HMENU, KBDLLHOOKSTRUCT, MF_SEPARATOR,
+    MF_STRING, MSG, PostQuitMessage, RegisterClassExW, RegisterWindowMessageW, SetForegroundWindow,
+    SetWindowsHookExW, TPM_BOTTOMALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN,
+    TPM_RIGHTBUTTON, TrackPopupMenu, TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL,
+    WINDOW_EX_STYLE, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN,
     WM_LBUTTONUP, WM_RBUTTONUP, WM_SYSKEYDOWN, WNDCLASSEXW, WS_POPUP,
 };
 use windows_core::{ComObject, HSTRING, PCWSTR, w};
@@ -106,11 +108,25 @@ pub fn run() -> Result<()> {
 
         let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_proc), Some(hinstance), 0)?;
         info!("keyboard hook installed");
+        // Out of context, so called from this thread's message loop.
+        let foreground_hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(foreground_proc),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        if foreground_hook.is_invalid() {
+            error!("unable to watch the foreground window");
+        }
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        let _ = UnhookWinEvent(foreground_hook);
         let _ = UnhookWindowsHookEx(hook);
         if let Some(state) = STATE.with(|state| state.take()) {
             state.ui.remove_tray_icon();
@@ -128,6 +144,25 @@ unsafe extern "system" fn keyboard_proc(code: i32, wparam: WPARAM, lparam: LPARA
         }
     }
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+/// Another window came to the front: drops what was being typed, as TSF ends
+/// a composition when the focus moves. Committing it would type it into the
+/// new window, which is where SendInput goes now.
+unsafe extern "system" fn foreground_proc(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _object: i32,
+    _child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    debug!("foreground window changed");
+    with_state(|State { engine, ui }| {
+        engine.on_composition_terminated();
+        let _ = ui.end_composition();
+    });
 }
 
 /// Whether to swallow the key: the engine took it.
