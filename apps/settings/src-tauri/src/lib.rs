@@ -8,13 +8,32 @@ use self::config::load_config;
 use self::config::save_config;
 use self::fonts::get_system_fonts;
 use self::version::app_version;
+use chewing_tip_core::SETTINGS_SCHEME;
 use tauri::Emitter;
+use tauri::LogicalSize;
 use tauri::Manager;
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
 
 mod config;
+mod dictionary;
 mod fonts;
 mod version;
+
+/// The IME's menu opens the user dictionary with `<scheme>://dictionary`,
+/// and the settings otherwise.
+fn opens_dictionary() -> bool {
+    let url = format!("{SETTINGS_SCHEME}://dictionary");
+    std::env::args().skip(1).any(|arg| arg.starts_with(&url))
+}
+
+#[tauri::command]
+fn start_page() -> &'static str {
+    if opens_dictionary() {
+        "dictionary"
+    } else {
+        "settings"
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,18 +41,30 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
+        .manage(dictionary::Loaded::default())
         .setup(|app| {
-            let file_menu = SubmenuBuilder::new(app, "檔案")
-                .text("import", "匯入設定檔...")
-                .text("export", "匯出設定檔...")
-                .build()?;
+            let dictionary = opens_dictionary();
             let about_menu = SubmenuBuilder::new(app, "關於")
                 .text("about", "關於 InputMethodEditor")
                 .build()?;
-            let menu = MenuBuilder::new(app)
-                .items(&[&file_menu, &about_menu])
-                .build()?;
+            let menu = if dictionary {
+                MenuBuilder::new(app).items(&[&about_menu]).build()?
+            } else {
+                let file_menu = SubmenuBuilder::new(app, "檔案")
+                    .text("import", "匯入設定檔...")
+                    .text("export", "匯出設定檔...")
+                    .build()?;
+                MenuBuilder::new(app)
+                    .items(&[&file_menu, &about_menu])
+                    .build()?
+            };
             if let Some(window) = app.get_webview_window("main") {
+                if dictionary {
+                    window.set_title("InputMethodEditor 使用者詞庫")?;
+                    window.set_size(LogicalSize::new(930.0, 600.0))?;
+                    window.set_maximizable(true)?;
+                    window.center()?;
+                }
                 window.show().expect("failed to show main window");
                 window.set_menu(menu)?;
                 let app = app.handle().clone();
@@ -65,6 +96,11 @@ pub fn run() {
             save_config,
             get_system_fonts,
             app_version,
+            start_page,
+            dictionary::load,
+            dictionary::save,
+            dictionary::validate,
+            dictionary::map_bopomofo,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

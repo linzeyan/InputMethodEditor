@@ -1765,6 +1765,8 @@ dependencies = [
 name = "ime-settings"
 version = "0.2.4"
 dependencies = [
+ "anyhow",
+ "chewing",
  "chewing_tip_core",
  "log",
  "scoped-error",

@@ -6,6 +6,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import About from "./About";
+import DictionaryEditor from "./DictionaryEditor";
 import { invoke } from "@tauri-apps/api/core";
 import { getAllWindows } from "@tauri-apps/api/window";
 import { usePrefersColorScheme } from "./theme";
@@ -25,19 +26,22 @@ getAllWindows().then(async (wins) => {
   }
 });
 
-function Root() {
+function Root({ page }: { page: string }) {
   const isDarkTheme = usePrefersColorScheme();
 
   return (
     <React.StrictMode>
       <FluentProvider theme={isDarkTheme ? webDarkTheme : webLightTheme}>
-        {location.hash == "" && <App />}
+        {location.hash == "" &&
+          (page == "dictionary" ? <DictionaryEditor /> : <App />)}
         {location.hash == "#about" && <About />}
       </FluentProvider>
     </React.StrictMode>
   );
 }
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <Root />,
+invoke("start_page").then((page) =>
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <Root page={page as string} />,
+  ),
 );

@@ -13,6 +13,8 @@ name = "InputMethodEditorSettings"
 path = "src/main.rs"
 
 [dependencies]
+anyhow.workspace = true
+chewing.workspace = true
 chewing_tip_core = { path = "../../../crates/chewing_tip_core" }
 log.workspace = true
 scoped-error.workspace = true

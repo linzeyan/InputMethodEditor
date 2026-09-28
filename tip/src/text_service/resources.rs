@@ -22,6 +22,7 @@ pub(crate) const ID_SIMPDICT: u32 = 40012;
 pub(crate) const ID_LITTLEDICT: u32 = 40013;
 pub(crate) const ID_PROVERBDICT: u32 = 40014;
 pub(crate) const ID_CHEWING_HELP: u32 = 40015;
+pub(crate) const ID_USER_DICTIONARY: u32 = 40016;
 pub(crate) const ID_CONFIG: u32 = 40017;
 
 pub(crate) const IDR_MENU: u32 = 109;

@@ -111,6 +111,7 @@ BEGIN
     POPUP "POPUP"
     BEGIN
         MENUITEM "新酷音使用說明 (&H)",                ID_CHEWING_HELP
+        MENUITEM "編輯使用者詞庫 (&E)",                ID_USER_DICTIONARY
         MENUITEM "設定 (&C)",                       ID_CONFIG
         MENUITEM SEPARATOR
         POPUP "網路辭典 (&D)"

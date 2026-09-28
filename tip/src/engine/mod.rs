@@ -746,6 +746,7 @@ impl Engine {
             ID_PROVERBDICT => open_url("https://dict.idioms.moe.edu.tw/"),
             ID_CHEWING_HELP => open_url("https://chewing.im/features.html"),
             ID_CONFIG => open_url(&format!("{SETTINGS_SCHEME}://open")),
+            ID_USER_DICTIONARY => open_url(&format!("{SETTINGS_SCHEME}://dictionary")),
             _ => {}
         }
     }
