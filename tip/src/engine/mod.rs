@@ -1124,6 +1124,9 @@ impl Engine {
             // default would take Shift+Space for it.
             opt.enable_fullwidth_toggle_key = false;
             opt.sort_candidates_by_frequency = cfg.sort_candidates_by_frequency;
+            // Set here, not once at init: every config change and focus
+            // rebuilds the editor, which would fall back to chewing's 39.
+            opt.auto_commit_threshold = 50;
             // TODO experimental
             opt.auto_snapshot_selections = true;
         });
@@ -1139,10 +1142,6 @@ impl Engine {
 
     /// Initializes the config to the user default
     fn apply_init_config(&mut self, ui: &impl Frontend) -> Result<()> {
-        self.chewing_editor.set_editor_options(|opt| {
-            opt.auto_commit_threshold = 50;
-        });
-
         self.lang_mode.set(if self.cfg.chewing_tsf.default_english {
             TsfLangMode::English
         } else {
