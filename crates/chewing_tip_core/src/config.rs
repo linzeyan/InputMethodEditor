@@ -38,6 +38,9 @@ pub struct Config {
     pub chewing_tsf: ChewingTsfConfig,
     pub symbols_dat: String,
     pub swkb_dat: String,
+    /// Settings exported before custom phrases have none.
+    #[serde(default)]
+    pub custom_phrase_dat: String,
 }
 
 /// Defaults for missing fields, so that a settings file exported before a
@@ -333,6 +336,7 @@ impl Config {
                 chewing_tsf: cfg,
                 symbols_dat: String::new(),
                 swkb_dat: String::new(),
+                custom_phrase_dat: String::new(),
             })
         })
     }

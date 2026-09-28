@@ -188,6 +188,7 @@ function App() {
   const [config, setConfig] = React.useState<ChewingTsfConfig>();
   const [symbols_dat, setSymbolsDat] = React.useState<string>("");
   const [swkb_dat, setSwkbDat] = React.useState<string>("");
+  const [custom_phrase_dat, setCustomPhraseDat] = React.useState<string>("");
   const [showAdvanced, setShowAdvanced] = React.useState<boolean>(false);
 
   useEffect(() => {
@@ -205,6 +206,7 @@ function App() {
           setConfig(cfg.chewing_tsf);
           setSwkbDat(cfg.swkb_dat);
           setSymbolsDat(cfg.symbols_dat);
+          setCustomPhraseDat(cfg.custom_phrase_dat);
         })
         .catch(async (e) => {
           await message("無法匯入設定檔，請確認檔案格式正確。\n\n" + e, {
@@ -223,7 +225,12 @@ function App() {
       }
       invoke("export_config", {
         path: file,
-        config: { chewing_tsf: config, symbols_dat, swkb_dat },
+        config: {
+          chewing_tsf: config,
+          symbols_dat,
+          swkb_dat,
+          custom_phrase_dat,
+        },
       }).catch(async (e) => {
         await message("無法寫入檔案。\n\n" + e, {
           title: "錯誤",
@@ -235,7 +242,7 @@ function App() {
       unlisten_import.then((f) => f());
       unlisten_export.then((f) => f());
     };
-  }, [config, symbols_dat, swkb_dat]);
+  }, [config, symbols_dat, swkb_dat, custom_phrase_dat]);
 
   useEffect(() => {
     invoke("load_config").then((value) => {
@@ -243,6 +250,7 @@ function App() {
       setConfig(config.chewing_tsf);
       setSwkbDat(config.swkb_dat);
       setSymbolsDat(config.symbols_dat);
+      setCustomPhraseDat(config.custom_phrase_dat);
     });
   }, []);
 
@@ -303,7 +311,16 @@ function App() {
 
   const save_config = () =>
     invoke("save_config", {
-      config: { chewing_tsf: config, symbols_dat, swkb_dat },
+      config: {
+        chewing_tsf: config,
+        symbols_dat,
+        swkb_dat,
+        custom_phrase_dat,
+      },
+    }).catch(async (e) => {
+      // Shown, then passed on so that 確定 leaves the window open.
+      await message(String(e), { title: "錯誤", kind: "error" });
+      throw e;
     });
 
   return (
@@ -320,6 +337,7 @@ function App() {
         <Tab value="keybind">自訂快捷鍵</Tab>
         <Tab value="4">特殊符號</Tab>
         <Tab value="5">快捷符號</Tab>
+        <Tab value="phrases">自訂詞組</Tab>
       </TabList>
       {selectedTab === "1" && config && (
         <InputBehaviors
@@ -364,6 +382,13 @@ function App() {
       )}
       {selectedTab === "5" && config && (
         <Shortcut styles={styles} swkb_dat={swkb_dat} setSwkbDat={setSwkbDat} />
+      )}
+      {selectedTab === "phrases" && config && (
+        <Phrases
+          styles={styles}
+          custom_phrase_dat={custom_phrase_dat}
+          setCustomPhraseDat={setCustomPhraseDat}
+        />
       )}
       {selectedTab === "keybind" && config && (
         <KeybindingTab keybind={config.keybind} setKeybind={setKeybind} />
@@ -1033,6 +1058,29 @@ const Shortcut = ({ styles, swkb_dat, setSwkbDat }) => (
         以上是符號表的設定檔，語法相當簡單：
         <br />
         每一行的內容都是：「大寫字母」＋「空格」＋「對應的符號或文字」。
+      </Text>
+    </div>
+  </div>
+);
+
+const Phrases = ({ styles, custom_phrase_dat, setCustomPhraseDat }) => (
+  <div className={styles.content} role="tabpanel" aria-labelledby="Phrases">
+    <div className={styles.column}>
+      <Field label="打縮寫再按空白鍵，就換成設定的文字（注音、拼音都可以用）：">
+        <Textarea
+          value={custom_phrase_dat}
+          className={styles.textarea}
+          textarea={{ className: styles.texarea_inner }}
+          onChange={(_ev, data) => setCustomPhraseDat(data.value)}
+        />
+      </Field>
+      <Text>
+        每一行是：「縮寫」＋「空格」＋「文字」，縮寫只能用英文字母，例如：
+        <br />
+        addr 臺北市信義區市府路 1 號
+        <br />
+        縮寫要在沒有組字時開始打；和拼音相同的縮寫（例如 wo）會取代原本的字。#
+        開頭的行是註解。
       </Text>
     </div>
   </div>

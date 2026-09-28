@@ -1,4 +1,5 @@
 pub mod config;
+pub mod phrases;
 pub mod shell;
 
 /// Names the per-user registry key and data folder. Changing it orphans the

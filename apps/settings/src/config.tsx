@@ -57,4 +57,5 @@ export type Config = {
   chewing_tsf: ChewingTsfConfig;
   symbols_dat: string;
   swkb_dat: string;
+  custom_phrase_dat: string;
 };

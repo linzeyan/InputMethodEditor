@@ -9,7 +9,10 @@ pub(crate) mod pinyin;
 pub(crate) mod shuangpin;
 
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::ffi::{OsString, c_void};
+use std::fs;
+use std::io::ErrorKind;
 use std::mem;
 use std::os::windows::ffi::OsStringExt;
 use std::path::{Path, PathBuf};
@@ -28,11 +31,14 @@ use chewing::input::keymap::{
     DVORAK_MAP, INVERTED_COLEMAK_DH_ANSI_MAP, INVERTED_COLEMAK_DH_ORTH_MAP, INVERTED_COLEMAK_MAP,
     INVERTED_DVORAK_MAP, INVERTED_QGMLWY_MAP, INVERTED_WORKMAN_MAP,
 };
-use chewing::input::keysym::{Keysym, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE};
+use chewing::input::keysym::{
+    Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE,
+};
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
 use chewing_tip_core::SETTINGS_SCHEME;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
+use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use log::{debug, error, info};
 use scoped_error::{ErrorExt, expect_error};
@@ -170,6 +176,11 @@ pub(crate) struct Engine {
     /// What the character had before the last key, a Space, made it tone 1.
     /// A second Space puts it back and types a space.
     space_undo: Option<Syllable>,
+    /// Custom phrases by code.
+    phrases: HashMap<String, String>,
+    /// The letters typed since the composition was empty, while nothing else
+    /// has been; Space after a code types its phrase.
+    typed: Option<String>,
 }
 
 impl Engine {
@@ -194,6 +205,8 @@ impl Engine {
             candidate_list: Default::default(),
             candidate_indices: vec![],
             space_undo: None,
+            phrases: HashMap::new(),
+            typed: None,
         };
 
         if let Err(error) = engine.init_chewing_context(ui) {
@@ -398,6 +411,12 @@ impl Engine {
             if handled {
                 return Ok(true);
             }
+        }
+
+        if let Some(phrase) = self.custom_phrase(&evt) {
+            // The code's letters give way to the phrase.
+            self.chewing_editor.clear();
+            return self.show_edit(ui, Some(phrase));
         }
 
         if self.cfg.chewing_tsf.pinyin
@@ -607,7 +626,8 @@ impl Engine {
 
         debug!("updated candidates");
 
-        let commit = if last_behavior == EditorKeyBehavior::Commit {
+        // A custom phrase comes with the editor cleared, not committed.
+        let commit = if last_behavior == EditorKeyBehavior::Commit || text_action.is_some() {
             let mut commit = self.chewing_editor.display_commit().to_owned();
             self.chewing_editor.ack();
             if let Some(param) = text_action {
@@ -1171,6 +1191,7 @@ impl Engine {
     /// Applys config changes that should be effective at runtime
     pub(crate) fn apply_runtime_config(&mut self, ui: &impl Frontend) -> Result<()> {
         self.chewing_editor = Self::build_editor_from_cfg(&self.cfg.chewing_tsf)?;
+        self.phrases = load_phrases();
         self.apply_input_method();
         let _ = ui.update_lang_buttons(self);
         let keybindings = self
@@ -1182,6 +1203,39 @@ impl Engine {
             .collect();
         self.keybindings = keybindings;
         Ok(())
+    }
+
+    /// The custom phrase for Space after the letters typed into an empty
+    /// composition. Any other key ends those letters, but Backspace may take
+    /// back one still being spelled.
+    fn custom_phrase(&mut self, evt: &KeyboardEvent) -> Option<String> {
+        let typed = self.typed.take();
+        if evt.has_modifiers()
+            || !matches!(self.lang_mode.get(), TsfLangMode::Chinese)
+            || self.chewing_editor.is_selecting()
+        {
+            return None;
+        }
+        match evt.ksym {
+            SYM_SPACE => self.phrases.get(&typed?).cloned(),
+            SYM_BACKSPACE if self.chewing_editor.entering_syllable() => {
+                self.typed = typed.map(|mut it| {
+                    it.pop();
+                    it
+                });
+                None
+            }
+            ksym if ksym.is_atoz() => {
+                let empty =
+                    self.chewing_editor.is_empty() && !self.chewing_editor.entering_syllable();
+                self.typed = if empty { Some(String::new()) } else { typed }.map(|mut it| {
+                    it.push(ksym.to_unicode().to_ascii_lowercase());
+                    it
+                });
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Maps a selection key to the digit chewing selects with. Plain digits
@@ -1208,6 +1262,26 @@ impl Engine {
         }
         Some(evt)
     }
+}
+
+/// The custom phrases the settings app saved. It checks them first, so a line
+/// that isn't a phrase was edited in by hand; that gives none rather than some.
+fn load_phrases() -> HashMap<String, String> {
+    // new_editor has failed already without the user dir.
+    let Ok(path) = user_dir().map(|dir| dir.join(PHRASES_FILE)) else {
+        return HashMap::new();
+    };
+    let text = fs::read_to_string(path).unwrap_or_else(|error| {
+        // No file is no phrases saved yet.
+        if error.kind() != ErrorKind::NotFound {
+            error!("unable to read {PHRASES_FILE}: {error}");
+        }
+        String::new()
+    });
+    phrases::parse(&text).unwrap_or_else(|error| {
+        error!("{PHRASES_FILE}: {error}");
+        HashMap::new()
+    })
 }
 
 fn new_editor() -> Result<Editor> {

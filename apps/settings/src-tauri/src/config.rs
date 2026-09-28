@@ -8,6 +8,7 @@ use std::{
 };
 
 use chewing_tip_core::config::Config;
+use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::user_dir;
 use scoped_error::{Error, ErrorExt, expect_error};
 
@@ -84,6 +85,10 @@ pub(crate) fn load_config() -> Result<Config, String> {
                 cfg.swkb_dat = fs::read_to_string(path)?.into();
             }
 
+            if let Ok(path) = user_path_for_file(PHRASES_FILE) {
+                cfg.custom_phrase_dat = fs::read_to_string(path)?;
+            }
+
             Ok(cfg)
         })
     }
@@ -93,6 +98,9 @@ pub(crate) fn load_config() -> Result<Config, String> {
 
 #[tauri::command]
 pub fn save_config(mut config: Config) -> Result<(), String> {
+    // Before anything is saved, so a bad line leaves all as it was; the user
+    // fixes it from the message, which needs no source location.
+    phrases::parse(&config.custom_phrase_dat).map_err(|error| format!("自訂詞組{error}"))?;
     fn inner(config: &mut Config) -> Result<(), Error> {
         expect_error("無法儲存設定", || {
             config.save_reg();
@@ -119,6 +127,12 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
                 let user_swkb_dat_path = default_user_path_for_file("swkb.dat")?;
                 fs::create_dir_all(user_swkb_dat_path.parent().unwrap())?;
                 fs::write(user_swkb_dat_path, &config.swkb_dat)?;
+            }
+
+            let phrases_path = default_user_path_for_file(PHRASES_FILE)?;
+            if !config.custom_phrase_dat.is_empty() || phrases_path.exists() {
+                fs::create_dir_all(phrases_path.parent().unwrap())?;
+                fs::write(phrases_path, &config.custom_phrase_dat)?;
             }
 
             Ok(())
