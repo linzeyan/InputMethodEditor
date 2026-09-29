@@ -72,7 +72,7 @@
          the user can still add in Settings. -->
     <CustomAction Id="RegisterTipForUser" FileKey="tsfreg" ExeCommand="msi-register-user"
                   Execute="immediate" Return="check" />
-    <!-- Best effort, like unregister.bat: a failure must not block removal. -->
+    <!-- Best effort: a failure must not block removal. -->
     <CustomAction Id="UnregisterTip" FileKey="tsfreg" ExeCommand="msi-unregister"
                   Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>

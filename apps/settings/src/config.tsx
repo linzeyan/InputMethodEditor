@@ -45,6 +45,7 @@ export type ChewingTsfConfig = {
   simulate_english_layout: number;
   sync_lang_mode_openclose: boolean;
   keybind: [KeybindValue];
+  update_check_days: number;
 };
 
 export type KeybindValue = {

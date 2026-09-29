@@ -17,7 +17,10 @@ use tauri::menu::{MenuBuilder, SubmenuBuilder};
 mod config;
 mod dictionary;
 mod fonts;
+mod update;
 mod version;
+
+pub use update::check_update;
 
 /// The IME's menu opens the user dictionary with `<scheme>://dictionary`,
 /// and the settings otherwise.

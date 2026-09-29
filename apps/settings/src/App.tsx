@@ -345,6 +345,7 @@ function App() {
         <Tab value="4">特殊符號</Tab>
         <Tab value="5">快捷符號</Tab>
         <Tab value="phrases">自訂詞組</Tab>
+        <Tab value="update">更新</Tab>
       </TabList>
       {selectedTab === "1" && config && (
         <InputBehaviors
@@ -399,6 +400,9 @@ function App() {
       )}
       {selectedTab === "keybind" && config && (
         <KeybindingTab keybind={config.keybind} setKeybind={setKeybind} />
+      )}
+      {selectedTab === "update" && config && (
+        <Update config={config} setNumberConfig={setNumberConfig} />
       )}
       <div className={styles.action}>
         <Button
@@ -1261,6 +1265,25 @@ const Pinyin = ({ config, styles, setConfig }) => {
     </div>
   );
 };
+
+const Update = ({ config, setNumberConfig }) => (
+  <div role="tabpanel" aria-labelledby="Update" style={{ margin: "16px" }}>
+    <Tooltip
+      content="登入後和每天中午，看 GitHub 上有沒有新版本，但距離上次查看要滿這麼多天。有新版本時會詢問是否下載安裝，同意才下載。"
+      relationship="description"
+    >
+      <Field label="每隔幾天檢查一次新版本：" style={{ width: "50%" }}>
+        <SpinButton
+          value={config.update_check_days}
+          min={1}
+          max={30}
+          step={1}
+          onChange={setNumberConfig("update_check_days", 7)}
+        />
+      </Field>
+    </Tooltip>
+  </div>
+);
 
 const Symbols = ({ styles, symbols_dat, setSymbolsDat }) => (
   <div className={styles.content} role="tabpanel" aria-labelledby="Symbols">

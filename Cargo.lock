@@ -1771,6 +1771,8 @@ dependencies = [
  "log",
  "scoped-error",
  "serde",
+ "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -1778,6 +1780,7 @@ dependencies = [
  "tauri-plugin-process",
  "toml 0.9.12+spec-1.1.0",
  "windows 0.61.3",
+ "windows-registry",
 ]
 
 [[package]]

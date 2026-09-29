@@ -19,6 +19,10 @@ use windows::{
         System::{
             Com::*,
             Registry::{KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS},
+            TaskScheduler::{
+                ITaskFolder, ITaskService, TASK_CREATE_OR_UPDATE, TASK_LOGON_GROUP, TaskScheduler,
+            },
+            Variant::VARIANT,
         },
         UI::{Input::KeyboardAndMouse::HKL, TextServices::*},
     },
@@ -78,6 +82,71 @@ fn register_settings_scheme(exe: &Path) -> windows_registry::Result<()> {
         .set_string("", format!("\"{}\" \"%1\"", exe.display()))
 }
 
+const UPDATE_TASK: &str = "InputMethodEditor 檢查更新";
+
+/// Runs the settings app at every user's logon and daily, as that user. The
+/// app looks for a release only once its interval is up, which the task
+/// needn't know.
+fn register_update_task(settings_exe: &Path) -> Step {
+    let exe = settings_exe
+        .display()
+        .to_string()
+        .replace('&', "&amp;")
+        .replace('<', "&lt;");
+    // S-1-5-32-545 is Users. LeastPrivilege: an administrator's check runs
+    // unelevated like anything else they start, and msiexec asks for rights.
+    let xml = format!(
+        r#"<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <Principals>
+    <Principal id="Users">
+      <GroupId>S-1-5-32-545</GroupId>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Triggers>
+    <LogonTrigger><Delay>PT5M</Delay></LogonTrigger>
+    <CalendarTrigger>
+      <StartBoundary>2026-01-01T12:00:00</StartBoundary>
+      <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
+    </CalendarTrigger>
+  </Triggers>
+  <Settings>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>true</RunOnlyIfNetworkAvailable>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+  </Settings>
+  <Actions Context="Users">
+    <Exec>
+      <Command>{exe}</Command>
+      <Arguments>--check-update</Arguments>
+    </Exec>
+  </Actions>
+</Task>"#
+    );
+    unsafe {
+        task_folder()?.RegisterTask(
+            &BSTR::from(UPDATE_TASK),
+            &BSTR::from(xml),
+            TASK_CREATE_OR_UPDATE.0,
+            &VARIANT::default(),
+            &VARIANT::default(),
+            TASK_LOGON_GROUP,
+            &VARIANT::default(),
+        )?;
+    }
+    Ok(())
+}
+
+fn task_folder() -> Result<ITaskFolder> {
+    unsafe {
+        let service: ITaskService = CoCreateInstance(&TaskScheduler, None, CLSCTX_INPROC_SERVER)?;
+        let local = VARIANT::default();
+        service.Connect(&local, &local, &local, &local)?;
+        service.GetFolder(&BSTR::from("\\"))
+    }
+}
+
 /// On ARM64 Windows, x64 and ARM64 processes read the same 64-bit registry
 /// view, so the ARM64 package registers its native DLL there instead of x64.
 const NATIVE_DIR: &str = if cfg!(target_arch = "aarch64") {
@@ -106,6 +175,7 @@ fn register_machine(root: &Path) -> Step {
     register_com_server(KEY_WOW64_64KEY, &native_dll)?;
     register_com_server(KEY_WOW64_32KEY, &x86_dll)?;
     register_settings_scheme(&root.join(NATIVE_DIR).join(SETTINGS_EXE))?;
+    register_update_task(&root.join(NATIVE_DIR).join(SETTINGS_EXE))?;
 
     unsafe {
         let input_processor_profile_mgr: ITfInputProcessorProfileMgr =
@@ -195,6 +265,14 @@ fn unregister() -> Step {
         if let Err(error) = profile {
             failures.push(format!("輸入法設定檔：{error}"));
         }
+    }
+
+    let task =
+        task_folder().and_then(|folder| unsafe { folder.DeleteTask(&BSTR::from(UPDATE_TASK), 0) });
+    match task {
+        Err(error) if error.code() == HRESULT::from_win32(ERROR_FILE_NOT_FOUND.0) => {}
+        Err(error) => failures.push(format!("檢查更新排程：{error}")),
+        Ok(()) => {}
     }
 
     // UnregisterProfile and UnregisterCategory delete only the leaf entries,
