@@ -270,8 +270,23 @@ impl Editor {
                 None => HistoryDict::new(string_table.clone()),
             };
 
-            let composite_dict =
-                CompositeDict::new(static_dict, rare_dict, hist_dict.clone(), user_dict.clone());
+            // Optional. A UserDict, as only that holds words the string table
+            // lacks; this one is never written.
+            let unihan_dict = match sp.find_file("unihan_dict.csv") {
+                Some(path) => UserDict::open(&path, string_table.clone()).unwrap_or_else(|err| {
+                    error!("{}", err.report());
+                    UserDict::new(string_table.clone())
+                }),
+                None => UserDict::new(string_table.clone()),
+            };
+
+            let composite_dict = CompositeDict::new(
+                static_dict,
+                rare_dict,
+                hist_dict.clone(),
+                user_dict.clone(),
+                unihan_dict,
+            );
 
             let word_lattice_builder = LatticeBuilder {
                 dict: composite_dict.clone(),
@@ -1914,6 +1929,7 @@ impl EditorBuilder {
             self.rare_dict.clone(),
             self.history_dict.clone(),
             self.user_dict.clone(),
+            UserDict::new(self.string_table.clone()),
         );
 
         let word_lattice_builder = LatticeBuilder {

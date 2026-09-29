@@ -5,6 +5,7 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 [dependencies]
+chewing.workspace = true
 indoc = "2.0.5"
 jiff = { version = "0.2.0", default-features = false, features = ["std"] }
 scoped-error.workspace = true

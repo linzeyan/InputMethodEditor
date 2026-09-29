@@ -4,6 +4,7 @@ use scoped_error::{Error, expect_error};
 
 mod dist;
 mod download;
+mod unihan;
 mod version;
 mod zip;
 

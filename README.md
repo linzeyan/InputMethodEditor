@@ -6,6 +6,7 @@ Windows 中文輸入法，用安裝程式（MSI）安裝。
 ## 功能
 
 * 注音：新酷音的智慧選字、選字修正與自動學習，學到的詞所有程式共用；也可以不打聲調連著打，`ㄋㄧㄏㄠ` 就是「你好」
+* 罕用字：新酷音詞庫沒有的字（例如「䨻」）從 Unicode 的 Unihan 資料庫補上約 6000 字，用臺灣的讀音，排在候選字最後
 * 正體／簡體輸出切換，可選擇只轉字形（軟體→软体）或連用語一起轉（軟體→软件）
 * 漢語拼音：連打不用分隔、簡拼、模糊音，也可以用雙拼（小鶴、自然碼、微軟、搜狗），同樣會自動學習
 * 自訂詞組：在設定裡定義縮寫，例如打 `addr` 再按空白就輸入整段地址
@@ -92,6 +93,8 @@ Windows 10／11 x64。在 ARM64 版 Windows 上只能用於 x64／x86 程式。
 ## 授權與來源
 
 GPL-3.0-or-later。
+
+罕用字的讀音來自 Unicode 的 [Unihan 資料庫](https://www.unicode.org/charts/unihan.html) 18.0，依 Unicode License v3 使用，授權全文隨附於安裝目錄的 `Dictionary\unihan_license.txt`。
 
 fork 自 [windows-chewing-tsf](https://codeberg.org/chewing/windows-chewing-tsf)
 （Kan-Ru Chen 與新酷音貢獻者），以上游 26.9.0（commit `40a665f`）為起點，

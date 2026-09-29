@@ -47,6 +47,8 @@
               <File Id="rare_dict" Source="Dictionary/rare_dict.bin" />
               <File Id="swkb" Source="Dictionary/swkb.dat" />
               <File Id="symbols" Source="Dictionary/symbols.dat" />
+              <File Id="unihan_dict" Source="Dictionary/unihan_dict.csv" />
+              <File Id="unihan_license" Source="Dictionary/unihan_license.txt" />
             </Component>
           </Directory>
         </Directory>

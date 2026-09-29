@@ -287,6 +287,7 @@ mod tests {
             StaticDict::new(),
             HistoryDict::new(StringTable::new()),
             user_dict,
+            UserDict::new(StringTable::new()),
         )
     }
 

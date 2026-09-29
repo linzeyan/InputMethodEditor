@@ -19,6 +19,9 @@ struct CompositeDictInner {
     rare_dict: StaticDict,
     history_dict: HistoryDict,
     user_dict: UserDict,
+    /// Characters the static dictionaries lack, read from Unihan: they come
+    /// after every other word.
+    unihan_dict: UserDict,
 }
 
 impl CompositeDict {
@@ -27,6 +30,7 @@ impl CompositeDict {
         rare_dict: StaticDict,
         history_dict: HistoryDict,
         user_dict: UserDict,
+        unihan_dict: UserDict,
     ) -> CompositeDict {
         CompositeDict {
             inner: Arc::new(CompositeDictInner {
@@ -34,6 +38,7 @@ impl CompositeDict {
                 rare_dict,
                 history_dict,
                 user_dict,
+                unihan_dict,
             }),
         }
     }
@@ -45,6 +50,7 @@ impl CompositeDict {
         let mut readings = self.inner.static_dict.lookup_readings(syllables, strategy);
         readings.extend(self.inner.rare_dict.lookup_readings(syllables, strategy));
         readings.extend(self.inner.user_dict.fuzzy_readings(syllables));
+        readings.extend(self.inner.unihan_dict.fuzzy_readings(syllables));
         readings
     }
 
@@ -82,6 +88,13 @@ impl CompositeDict {
                 res.push((wid, f64::NEG_INFINITY, Some(user_pref)));
             }
         }
+        // Last, and only if not learned: a word the user typed keeps the place
+        // that earned it.
+        for (wid, boost) in self.inner.unihan_dict.lookup(syllables, strategy) {
+            if !res.iter().any(|cand| cand.0 == wid) {
+                res.push((wid, f64::NEG_INFINITY, Some(boost)));
+            }
+        }
         res.into_iter()
             .map(|cand| Candidate::Word {
                 wid: cand.0,
@@ -89,5 +102,53 @@ impl CompositeDict {
                 user_pref: cand.2,
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::CompositeDict;
+    use crate::{
+        dictionary::{LookupStrategy, StringTableBuilder},
+        lm::{StaticDict, StaticDictBuilder},
+        model::Candidate,
+        syl,
+        user::{HistoryDict, UserDict},
+        zhuyin::Bopomofo::*,
+    };
+
+    #[test]
+    fn unihan_words_come_last_until_the_user_learns_them() {
+        let mut strings = StringTableBuilder::new();
+        strings.insert("蹦");
+        let strings = strings.build();
+        let beng = syl![B, ENG, TONE4];
+        let mut static_dict = StaticDictBuilder::new();
+        static_dict.insert(&[beng], strings.get_wid("蹦").unwrap());
+        let user_dict = UserDict::new(strings.clone());
+        let unihan_dict =
+            UserDict::from_reader("䨻,ㄅㄥˋ,-100\n".as_bytes(), strings.clone()).unwrap();
+        let dict = CompositeDict::new(
+            static_dict.build(),
+            StaticDict::new(),
+            HistoryDict::new(strings.clone()),
+            user_dict.clone(),
+            unihan_dict,
+        );
+        let words = || -> Vec<(String, Option<i8>)> {
+            dict.lookup(&[beng], LookupStrategy::Standard)
+                .into_iter()
+                .map(|cand| match cand {
+                    Candidate::Word { wid, user_pref, .. } => {
+                        (strings.get_text(wid).unwrap(), user_pref)
+                    }
+                    _ => unreachable!(),
+                })
+                .collect()
+        };
+        assert_eq!(words(), [("蹦".into(), None), ("䨻".into(), Some(-100))]);
+        // Once added as the user's word, it ranks like one.
+        user_dict.insert(&[beng], "䨻");
+        assert_eq!(words(), [("蹦".into(), None), ("䨻".into(), Some(10))]);
     }
 }

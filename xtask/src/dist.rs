@@ -8,6 +8,7 @@ use xshell::{Shell, cmd};
 
 use crate::download::download_dictionary;
 use crate::flags::Dist;
+use crate::unihan::write_unihan_dict;
 
 /// Keep in sync with `chewing_tip_core::PRODUCT_NAME`: tsfreg looks for
 /// `<PRODUCT_NAME>.ico` beside itself.
@@ -133,6 +134,7 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
         )?;
         sh.copy_file("COPYING.txt", &dir)?;
         download_dictionary(&dir.join("Dictionary"))?;
+        write_unihan_dict(&dir.join("Dictionary"))?;
 
         if flags.msi {
             let wxs = sh.current_dir().join("installer/InputMethodEditor.wxs");
