@@ -26,7 +26,7 @@ mod flags {
                 /// Optional build number (u32)
                 optional -b, --build BUILD_NUMBER: u32
             }
-            /// Build the portable package in dist/.
+            /// Build the package folder in dist/, which the MSI is made from.
             cmd dist {
                 /// Target platform [gnu, gnullvm, msvc]
                 optional -t, --target TARGET: Target

@@ -64,15 +64,9 @@ jobs:
           test "$GITHUB_REF_NAME" = "v${pkgid##*[#@]}"
           grep -qF "\"${GITHUB_REF_NAME#v}.0\\0\"" tip/rc/version.rc
 
-      - name: Build portable package and MSI
+      - name: Build the MSI
         run: cargo xtask dist --release --target gnullvm --msi
 
-      # upload-artifact zips the folder itself, so upload the folder rather
-      # than nesting dist/InputMethodEditor.zip inside another zip.
-      - uses: actions/upload-artifact@v7
-        with:
-          name: InputMethodEditor
-          path: dist/InputMethodEditor
       - uses: actions/upload-artifact@v7
         with:
           name: InputMethodEditor-msi
@@ -81,9 +75,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           name: release
-          path: |
-            dist/InputMethodEditor.zip
-            dist/InputMethodEditor.msi
+          path: dist/InputMethodEditor.msi
 
   release:
     needs: build

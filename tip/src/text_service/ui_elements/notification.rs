@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use log::error;
 use scoped_error::expect_error;
 use windows::Win32::{
-    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM},
+    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, TRUE, WPARAM},
     Graphics::{
         Direct2D::{
             Common::{D2D_RECT_F, D2D1_COLOR_F},
@@ -21,8 +21,8 @@ use windows::Win32::{
         DirectComposition::IDCompositionTarget,
         DirectWrite::{
             DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_MEASURING_MODE_NATURAL,
-            DWRITE_TEXT_METRICS, DWriteCreateFactory, IDWriteFactory1,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_TEXT_METRICS,
+            DWriteCreateFactory, IDWriteFactory1,
         },
         Dxgi::{
             Common::DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGISwapChain1,
@@ -43,7 +43,6 @@ use windows_core::{
     BOOL, BSTR, ComObject, ComObjectInner, GUID, HSTRING, Interface, PCWSTR,
     Result as WindowsResult, implement, w,
 };
-use windows_numerics::Vector2;
 
 use crate::{
     text_service::ui_elements::UiError,
@@ -63,8 +62,7 @@ const ID_TIMEOUT: usize = 1;
 
 #[implement(ITfUIElement)]
 pub(crate) struct Notification {
-    /// None when typing through the keyboard hook, which has no TSF.
-    thread_mgr: Option<ITfThreadMgr>,
+    thread_mgr: ITfThreadMgr,
     element_id: Cell<u32>,
     parent: HWND,
     inner: Rc<NotificationInner>,
@@ -78,9 +76,6 @@ struct NotificationInner {
 #[derive(Default)]
 pub(crate) struct NotificationModel {
     pub(crate) text: HSTRING,
-    /// Where to draw a caret, in UTF-16 units into `text`: the keyboard hook
-    /// shows what is being typed here, since the app doesn't.
-    pub(crate) caret: Option<u32>,
     pub(crate) font_family: HSTRING,
     pub(crate) font_size: f32,
     pub(crate) fg_color: D2D1_COLOR_F,
@@ -337,24 +332,6 @@ impl View {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
-                    if let Some(caret) = model.caret {
-                        let layout = dwrite_factory.CreateTextLayout(
-                            &model.text,
-                            &text_format,
-                            f32::MAX,
-                            f32::MAX,
-                        )?;
-                        let (mut x, mut y) = (0.0, 0.0);
-                        let mut hit = DWRITE_HIT_TEST_METRICS::default();
-                        layout.HitTestTextPosition(caret, false, &mut x, &mut y, &mut hit)?;
-                        dc.DrawLine(
-                            Vector2::new(margin + x, margin + y),
-                            Vector2::new(margin + x, margin + y + hit.height),
-                            &brush,
-                            1.5,
-                            None,
-                        );
-                    }
                     dc.EndDraw(None, None)?;
 
                     // Present the draw buffer
@@ -385,26 +362,19 @@ impl Notification {
         };
         unsafe { RegisterClassExW(&wc) };
     }
-    pub(crate) fn new(
-        parent: HWND,
-        thread_mgr: Option<ITfThreadMgr>,
-    ) -> Result<ComObject<Notification>> {
+    pub(crate) fn new(parent: HWND, thread_mgr: ITfThreadMgr) -> Result<ComObject<Notification>> {
+        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         let inner = Rc::new(NotificationInner {
             model: RefCell::new(NotificationModel::default()),
             view: RefCell::new(View::Dummy),
         });
         let candidate_list = Notification {
-            thread_mgr: thread_mgr.clone(),
+            thread_mgr,
             element_id: Cell::new(0),
             parent,
             inner,
         }
         .into_object();
-        let Some(thread_mgr) = thread_mgr else {
-            candidate_list.Show(TRUE)?;
-            return Ok(candidate_list);
-        };
-        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         let mut should_show = TRUE;
         let mut ui_element_id = 0;
         let ui_element: ITfUIElement = candidate_list.cast()?;
@@ -416,11 +386,8 @@ impl Notification {
         Ok(candidate_list)
     }
     pub(crate) fn end_ui_element(&self) {
-        // Without TSF, dropping the notification closes its window.
-        let Some(thread_mgr) = &self.thread_mgr else {
-            return;
-        };
-        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = thread_mgr.cast() else {
+        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = self.thread_mgr.cast()
+        else {
             error!("unable to cast thread manager to ITfUIElementMgr");
             return;
         };
@@ -432,10 +399,7 @@ impl Notification {
         self.element_id.set(id);
     }
     fn update_ui_element(&self) -> Result<()> {
-        let Some(thread_mgr) = &self.thread_mgr else {
-            return Ok(());
-        };
-        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
+        let ui_manager: ITfUIElementMgr = self.thread_mgr.cast()?;
         unsafe {
             ui_manager.UpdateUIElement(self.element_id.get())?;
         }
@@ -475,15 +439,6 @@ impl Notification {
             window.refresh();
             window.show();
         }
-    }
-    pub(crate) fn hide(&self) {
-        if let Some(window) = self.inner.view.borrow().window() {
-            window.hide();
-        }
-    }
-    /// Where the window is on screen, if it is shown.
-    pub(crate) fn window_rect(&self) -> Option<RECT> {
-        self.inner.view.borrow().window()?.visible_rect()
     }
 }
 

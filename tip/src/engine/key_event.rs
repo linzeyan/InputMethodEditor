@@ -28,31 +28,20 @@ impl Default for SystemKeyboardEvent {
 
 impl SystemKeyboardEvent {
     pub(crate) fn new(vk: u16, lparam: isize) -> SystemKeyboardEvent {
-        let mut key_state = [0u8; 256];
-        unsafe {
-            if GetKeyboardState(&mut key_state).is_err() {
-                key_state.fill(0);
-            }
-        }
-        SystemKeyboardEvent::with_key_state(vk, ((lparam & 0xff0000) >> 16) as u16, key_state)
-    }
-    /// For a key this thread doesn't get as a message, which leaves its key
-    /// state behind; the caller knows the real one.
-    pub(crate) fn with_key_state(
-        vk: u16,
-        scan_code: u16,
-        key_state: [u8; 256],
-    ) -> SystemKeyboardEvent {
         let scan_code = {
-            let mut scan_code = scan_code;
+            let mut scan_code = ((lparam & 0xff0000) >> 16) as u16;
             if scan_code == 0 {
                 // Workaround some applications that use WPF and send 0 scan_code (e.g. Fork)
                 scan_code = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16;
             }
             scan_code
         };
+        let mut key_state = [0u8; 256];
         let mut code = 0;
         unsafe {
+            if GetKeyboardState(&mut key_state).is_err() {
+                key_state.fill(0);
+            }
             // try to convert the key event to an ASCII character
             // ToAscii API tries to convert Ctrl + printable characters to
             // ASCII 0x00 - 0x31 non-printable escape characters, which we don't want

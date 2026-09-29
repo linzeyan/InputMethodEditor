@@ -3,7 +3,6 @@
 
 mod com;
 mod engine;
-pub mod hook;
 mod keybind;
 mod logging;
 mod quirk;

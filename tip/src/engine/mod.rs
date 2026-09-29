@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (c) 2026 Kan-Ru Chen
 
-//! Typing, apart from where the text goes. The TSF text service and the
-//! keyboard hook each drive it through their own [`Frontend`].
+//! Typing, apart from where the text goes. The TSF text service drives it
+//! through [`Frontend`].
 
 pub(crate) mod key_event;
 pub(crate) mod pinyin;
@@ -129,8 +129,7 @@ impl PartialEq<LanguageMode> for TsfLangMode {
     }
 }
 
-/// Where typing goes: a TSF document, or whatever window a keyboard hook
-/// types into.
+/// Where typing goes: a TSF document.
 pub(crate) trait Frontend {
     /// A composition is open in the document.
     fn has_composition(&self) -> bool;
@@ -142,7 +141,7 @@ pub(crate) trait Frontend {
     /// The window popups belong to.
     fn popup_parent(&self) -> Result<HWND>;
     /// Told about popups, so that apps drawing their own can hide ours.
-    fn thread_mgr(&self) -> Option<ITfThreadMgr>;
+    fn thread_mgr(&self) -> ITfThreadMgr;
     fn insert_text(&mut self, text: &str) -> Result<()>;
     /// Puts `commit` into the document and shows `preedit` as what is being
     /// typed; `segments` and `cursor` are character offsets into it.
@@ -863,7 +862,6 @@ impl Engine {
             let notification = Notification::new(hwnd, ui.thread_mgr())?;
             notification.set_model(NotificationModel {
                 text: HSTRING::from(text),
-                caret: None,
                 font_family: HSTRING::from(&self.cfg.chewing_tsf.font_family),
                 font_size: self.cfg.chewing_tsf.font_size as f32,
                 fg_color: color_s(&self.cfg.chewing_tsf.notify_fg_color),

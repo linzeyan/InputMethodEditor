@@ -622,8 +622,8 @@ impl Frontend for Tsf<'_> {
         Ok(unsafe { view.GetWnd().unwrap_or_default() })
     }
 
-    fn thread_mgr(&self) -> Option<ITfThreadMgr> {
-        Some(self.ui.thread_mgr.clone())
+    fn thread_mgr(&self) -> ITfThreadMgr {
+        self.ui.thread_mgr.clone()
     }
 
     fn insert_text(&mut self, text: &str) -> Result<()> {

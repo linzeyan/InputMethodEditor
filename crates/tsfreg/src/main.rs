@@ -15,13 +15,12 @@ use windows::{
         Foundation::ERROR_FILE_NOT_FOUND,
         Globalization::*,
         Security::Authorization::{SE_FILE_OBJECT, SE_REGISTRY_KEY},
-        Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ, GetDriveTypeW},
+        Storage::FileSystem::{FILE_GENERIC_EXECUTE, FILE_GENERIC_READ},
         System::{
             Com::*,
             Registry::{KEY_READ, KEY_WOW64_32KEY, KEY_WOW64_64KEY, REG_SAM_FLAGS},
-            WindowsProgramming::DRIVE_REMOTE,
         },
-        UI::{Input::KeyboardAndMouse::HKL, TextServices::*, WindowsAndMessaging::*},
+        UI::{Input::KeyboardAndMouse::HKL, TextServices::*},
     },
     core::*,
 };
@@ -47,7 +46,6 @@ const CATEGORIES: [GUID; 7] = [
     GUID_TFCAT_TIPCAP_COMLESS,
 ];
 
-type Outcome = std::result::Result<Option<&'static str>, Box<dyn Error>>;
 type Step = std::result::Result<(), Box<dyn Error>>;
 
 fn zh_tw_langid() -> u16 {
@@ -57,23 +55,6 @@ fn zh_tw_langid() -> u16 {
     } else {
         lcid as u16
     }
-}
-
-/// Program Files is only writable by administrators. Anywhere else, any
-/// process running as this user could swap the DLL that elevated apps load.
-fn is_admin_protected(root: &Path) -> bool {
-    let root = root.to_string_lossy().to_lowercase();
-    ["ProgramW6432", "ProgramFiles", "ProgramFiles(x86)"]
-        .iter()
-        .filter_map(|var| env::var(var).ok())
-        .any(|dir| root.starts_with(&format!("{}\\", dir.to_lowercase())))
-}
-
-fn is_network_drive(root: &Path) -> bool {
-    let Some(volume) = root.ancestors().last() else {
-        return false;
-    };
-    unsafe { GetDriveTypeW(&HSTRING::from(volume.as_os_str())) == DRIVE_REMOTE }
 }
 
 fn register_com_server(view: REG_SAM_FLAGS, dll: &Path) -> windows_registry::Result<()> {
@@ -104,52 +85,6 @@ const NATIVE_DIR: &str = if cfg!(target_arch = "aarch64") {
 } else {
     "x64"
 };
-
-fn register(root: &Path) -> Outcome {
-    let native_dll = root.join(NATIVE_DIR).join("chewing_tip.dll");
-    let x86_dll = root.join("x86").join("chewing_tip.dll");
-    let icon = root.join(format!("{PRODUCT_NAME}.ico"));
-    let settings = root.join(NATIVE_DIR).join(SETTINGS_EXE);
-    for path in [&native_dll, &x86_dll, &icon, &settings] {
-        if !path.exists() {
-            return Err(format!("找不到 {}", path.display()).into());
-        }
-    }
-    // Every app loads the DLL, including elevated and AppContainer ones that
-    // may not reach the share; and network folders take no ACL, which
-    // register_machine needs.
-    if is_network_drive(root) {
-        return Err(format!(
-            "資料夾在網路磁碟機上：\n{}\n\n\
-             請把整個資料夾複製到這台電腦（建議 C:\\Program Files\\{PRODUCT_NAME}），\
-             再從那裡執行 register.bat。",
-            root.display()
-        )
-        .into());
-    }
-
-    if !is_admin_protected(root) {
-        let answer = message_box(
-            &format!(
-                "輸入法資料夾不在 Program Files：\n{}\n\n\
-                 註冊後，連以系統管理員身分執行的程式也會載入這裡的 DLL。\
-                 任何以你的身分執行的程式都能替換它，進而取得系統管理員權限。\n\n\
-                 仍要註冊嗎？",
-                root.display()
-            ),
-            MB_OKCANCEL | MB_ICONWARNING | MB_DEFBUTTON2,
-        );
-        if answer != IDOK {
-            return Ok(None);
-        }
-    }
-
-    register_machine(root)?;
-    register_user()?;
-    Ok(Some(
-        "註冊完成。已開啟的程式要重新開啟後才能使用這個輸入法。",
-    ))
-}
 
 /// The part that needs administrator rights; the MSI runs it as SYSTEM.
 fn register_machine(root: &Path) -> Step {
@@ -221,7 +156,7 @@ fn register_user() -> Step {
 
 /// Best effort: keeps going after a failed step so a half-registered state
 /// can still be cleaned up, then reports every step that failed.
-fn unregister() -> Outcome {
+fn unregister() -> Step {
     let mut failures: Vec<String> = vec![];
     unsafe {
         match CoCreateInstance::<_, ITfCategoryMgr>(
@@ -290,26 +225,13 @@ fn unregister() -> Outcome {
     }
 
     if failures.is_empty() {
-        Ok(Some(
-            "已解除註冊。使用者詞庫和設定仍保留；已開啟的程式要重新開啟後才會完全移除。",
-        ))
+        Ok(())
     } else {
         Err(format!(
             "部分步驟失敗（之前未註冊時屬正常）：\n{}",
             failures.join("\n")
         )
         .into())
-    }
-}
-
-fn message_box(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
-    unsafe {
-        MessageBoxW(
-            None,
-            &HSTRING::from(text),
-            &HSTRING::from(PRODUCT_NAME),
-            style,
-        )
     }
 }
 
@@ -322,45 +244,21 @@ fn init() -> std::result::Result<PathBuf, Box<dyn Error>> {
         .to_path_buf())
 }
 
-fn run(verb: Option<&str>) -> Outcome {
-    let root = init()?;
-    match verb {
-        Some("register") => register(&root),
-        Some("unregister") => unregister(),
-        _ => Err("用法：tsfreg register | tsfreg unregister".into()),
-    }
-}
-
 /// Steps of the MSI, which has already asked for elevation and shows its own
 /// errors. No message box: as SYSTEM it would hang the install out of sight.
-fn run_msi_step(step: &str) -> Step {
+fn run(step: Option<&str>) -> Step {
     let root = init()?;
     match step {
-        "register" => register_machine(&root),
-        "register-user" => register_user(),
-        "unregister" => unregister().map(drop),
-        _ => Err(format!("unknown MSI step: {step}").into()),
+        Some("msi-register") => register_machine(&root),
+        Some("msi-register-user") => register_user(),
+        Some("msi-unregister") => unregister(),
+        _ => Err(format!("unknown MSI step: {step:?}").into()),
     }
 }
 
 fn main() -> ExitCode {
-    let verb = env::args().nth(1);
-    if let Some(step) = verb.as_deref().and_then(|verb| verb.strip_prefix("msi-")) {
-        return match run_msi_step(step) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(_) => ExitCode::FAILURE,
-        };
-    }
-    match run(verb.as_deref()) {
-        Ok(Some(done)) => {
-            message_box(done, MB_OK | MB_ICONINFORMATION);
-            ExitCode::SUCCESS
-        }
-        // Cancelled by the user.
-        Ok(None) => ExitCode::FAILURE,
-        Err(error) => {
-            message_box(&format!("失敗：{error}"), MB_OK | MB_ICONERROR);
-            ExitCode::FAILURE
-        }
+    match run(env::args().nth(1).as_deref()) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(_) => ExitCode::FAILURE,
     }
 }

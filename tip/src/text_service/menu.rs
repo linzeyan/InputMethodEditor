@@ -6,12 +6,12 @@ use windows::Win32::{Foundation::HINSTANCE, UI::WindowsAndMessaging::*};
 use windows_core::PCWSTR;
 
 #[derive(Default)]
-pub(crate) struct Menu {
+pub(super) struct Menu {
     hmenu: HMENU,
 }
 
 impl Menu {
-    pub(crate) fn load(hinst: HINSTANCE, resource_id: u32) -> Menu {
+    pub(super) fn load(hinst: HINSTANCE, resource_id: u32) -> Menu {
         let hmenu =
             match unsafe { LoadMenuW(Some(hinst), PCWSTR::from_raw(resource_id as *const u16)) } {
                 Ok(menu) => menu,
@@ -22,7 +22,7 @@ impl Menu {
             };
         Menu { hmenu }
     }
-    pub(crate) fn sub_menu(&self, npos: i32) -> HMENU {
+    pub(super) fn sub_menu(&self, npos: i32) -> HMENU {
         if self.hmenu.is_invalid() {
             return HMENU::default();
         }

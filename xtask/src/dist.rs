@@ -1,14 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-use std::fs::File;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::str::FromStr;
 
 use scoped_error::{Error, expect_error};
 use xshell::{Shell, cmd};
-use zip::ZipWriter;
-use zip::write::SimpleFileOptions;
 
 use crate::download::download_dictionary;
 use crate::flags::Dist;
@@ -38,16 +34,8 @@ impl FromStr for Target {
     }
 }
 
-/// tsfreg writes HKLM, so the scripts ask for elevation; a double-clicked
-/// batch file cannot request UAC on its own.
-fn elevated_bat(verb: &str) -> String {
-    format!(
-        "@echo off\r\npowershell -NoProfile -Command \"Start-Process -FilePath '%~dp0tsfreg.exe' -ArgumentList '{verb}' -Verb RunAs\"\r\n"
-    )
-}
-
 pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
-    expect_error("Failed to build the portable package", || {
+    expect_error("Failed to build the package", || {
         if flags.msi && flags.arm64 {
             Err("wixl can't build an ARM64 MSI")?;
         }
@@ -122,12 +110,6 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             x86_out.join("chewing_tip.dll"),
             sh.create_dir(dir.join("x86"))?,
         )?;
-        // Beside the DLL, which finds the dictionary from its own folder's
-        // parent. Not in the MSI: it is for accounts that can't run one.
-        sh.copy_file(
-            native_out.join("InputMethodEditor.exe"),
-            dir.join(native_dir),
-        )?;
         sh.copy_file(native_out.join("tsfreg.exe"), &dir)?;
         // Beside the DLL too, which tsfreg registers it from. On gnu targets
         // the WebView2 loader is a DLL, which its build script puts there.
@@ -139,7 +121,6 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
         if flags.release && matches!(flags.target, Some(Target::GnuLlvm)) {
             let binaries = [
                 dir.join(native_dir).join("chewing_tip.dll"),
-                dir.join(native_dir).join("InputMethodEditor.exe"),
                 dir.join(native_dir).join(SETTINGS_EXE),
                 dir.join("x86").join("chewing_tip.dll"),
                 dir.join("tsfreg.exe"),
@@ -151,13 +132,7 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             dir.join(format!("{PRODUCT_NAME}.ico")),
         )?;
         sh.copy_file("COPYING.txt", &dir)?;
-        sh.write_file(dir.join("register.bat"), elevated_bat("register"))?;
-        sh.write_file(dir.join("unregister.bat"), elevated_bat("unregister"))?;
         download_dictionary(&dir.join("Dictionary"))?;
-
-        let zip_path = dir.with_extension("zip");
-        zip_dir(&dir, &zip_path)?;
-        eprintln!("Wrote {}", zip_path.display());
 
         if flags.msi {
             let wxs = sh.current_dir().join("installer/InputMethodEditor.wxs");
@@ -168,30 +143,6 @@ pub(crate) fn dist(flags: Dist) -> Result<(), Error> {
             cmd!(sh, "wixl -a x64 -D Version={version} -o {msi} {wxs}").run()?;
             eprintln!("Wrote {}", msi.display());
         }
-        Ok(())
-    })
-}
-
-/// Entries have no top folder: Explorer's Extract All already creates one named
-/// after the zip, and a second level inside it only gets in the way.
-fn zip_dir(dir: &Path, dest: &Path) -> Result<(), Error> {
-    expect_error("failed to write the zip file", || {
-        let options = SimpleFileOptions::default();
-        let mut zip = ZipWriter::new(File::create(dest)?);
-        let mut pending = vec![dir.to_path_buf()];
-        while let Some(current) = pending.pop() {
-            for entry in std::fs::read_dir(&current)? {
-                let path = entry?.path();
-                if path.is_dir() {
-                    pending.push(path);
-                    continue;
-                }
-                let name = path.strip_prefix(dir)?.to_string_lossy().replace('\\', "/");
-                zip.start_file(name, options)?;
-                io::copy(&mut File::open(&path)?, &mut zip)?;
-            }
-        }
-        zip.finish()?;
         Ok(())
     })
 }

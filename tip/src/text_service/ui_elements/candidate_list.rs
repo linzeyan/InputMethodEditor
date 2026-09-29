@@ -41,9 +41,9 @@ use windows::Win32::{
         },
         WindowsAndMessaging::{
             CS_IME, GWLP_USERDATA, GetWindowLongPtrW, IDC_ARROW, LoadCursorW, MA_NOACTIVATE,
-            PostMessageW, RegisterClassExW, WINDOWPOS, WM_LBUTTONUP, WM_MOUSEACTIVATE,
-            WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN,
-            WS_EX_NOACTIVATE, WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
+            RegisterClassExW, WINDOWPOS, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT,
+            WM_WINDOWPOSCHANGING, WNDCLASSEXW, WS_CLIPCHILDREN, WS_EX_NOACTIVATE,
+            WS_EX_NOREDIRECTIONBITMAP, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -53,7 +53,6 @@ use windows_core::{
 };
 
 use crate::{
-    hook::WM_CANDIDATE,
     text_service::{CommandType, run_command, ui_elements::UiError},
     ui::{
         gfx::{
@@ -69,8 +68,7 @@ use super::message_box::draw_message_box;
 
 #[implement(ITfUIElement, ITfCandidateListUIElement)]
 pub(crate) struct CandidateList {
-    /// None when typing through the keyboard hook, which has no TSF.
-    thread_mgr: Option<ITfThreadMgr>,
+    thread_mgr: ITfThreadMgr,
     element_id: Cell<u32>,
     parent: HWND,
     inner: Rc<CandidateListInner>,
@@ -79,10 +77,8 @@ pub(crate) struct CandidateList {
 struct CandidateListInner {
     model: RefCell<Model>,
     view: RefCell<View>,
-    /// Told when an item is clicked; None when typing through the keyboard
-    /// hook, whose window `parent` is told instead.
-    thread_mgr: Option<ITfThreadMgr>,
-    parent: HWND,
+    /// Told when an item is clicked.
+    thread_mgr: ITfThreadMgr,
 }
 
 #[derive(Default)]
@@ -187,15 +183,8 @@ impl CandidateListInner {
         };
         debug!(slot; "candidate clicked");
         // Not borrowing the model: selecting redraws or closes this list.
-        match &self.thread_mgr {
-            Some(thread_mgr) => {
-                if let Err(error) = run_command(thread_mgr, slot as u32, CommandType::Candidate) {
-                    error!("unable to select the candidate: {error}");
-                }
-            }
-            None => unsafe {
-                let _ = PostMessageW(Some(self.parent), WM_CANDIDATE, WPARAM(slot), LPARAM(0));
-            },
+        if let Err(error) = run_command(&self.thread_mgr, slot as u32, CommandType::Candidate) {
+            error!("unable to select the candidate: {error}");
         }
     }
 }
@@ -605,28 +594,20 @@ impl CandidateList {
         };
         unsafe { RegisterClassExW(&wc) };
     }
-    pub(crate) fn new(
-        parent: HWND,
-        thread_mgr: Option<ITfThreadMgr>,
-    ) -> Result<ComObject<CandidateList>> {
+    pub(crate) fn new(parent: HWND, thread_mgr: ITfThreadMgr) -> Result<ComObject<CandidateList>> {
+        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         let inner = Rc::new(CandidateListInner {
             model: RefCell::new(Model::default()),
             view: RefCell::new(View::Dummy),
             thread_mgr: thread_mgr.clone(),
-            parent,
         });
         let candidate_list = CandidateList {
-            thread_mgr: thread_mgr.clone(),
+            thread_mgr,
             element_id: Cell::new(0),
             parent,
             inner,
         }
         .into_object();
-        let Some(thread_mgr) = thread_mgr else {
-            candidate_list.Show(TRUE)?;
-            return Ok(candidate_list);
-        };
-        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
         let mut should_show = TRUE;
         let mut ui_element_id = 0;
         let ui_element: ITfUIElement = candidate_list.cast()?;
@@ -638,11 +619,8 @@ impl CandidateList {
         Ok(candidate_list)
     }
     pub(crate) fn end_ui_element(&self) {
-        // Without TSF, dropping the list closes its window.
-        let Some(thread_mgr) = &self.thread_mgr else {
-            return;
-        };
-        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = thread_mgr.cast() else {
+        let Ok(ui_manager): Result<ITfUIElementMgr, windows_core::Error> = self.thread_mgr.cast()
+        else {
             error!("unable to cast thread manager to ITfUIElementMgr");
             return;
         };
@@ -654,10 +632,7 @@ impl CandidateList {
         self.element_id.set(id);
     }
     fn update_ui_element(&self) -> Result<()> {
-        let Some(thread_mgr) = &self.thread_mgr else {
-            return Ok(());
-        };
-        let ui_manager: ITfUIElementMgr = thread_mgr.cast()?;
+        let ui_manager: ITfUIElementMgr = self.thread_mgr.cast()?;
         unsafe {
             ui_manager.UpdateUIElement(self.element_id.get())?;
         }
@@ -791,8 +766,7 @@ impl ITfCandidateListUIElement_Impl for CandidateList_Impl {
     }
 
     fn GetDocumentMgr(&self) -> WindowsResult<ITfDocumentMgr> {
-        let thread_mgr = self.thread_mgr.as_ref().ok_or(E_FAIL)?;
-        unsafe { thread_mgr.GetFocus() }
+        unsafe { self.thread_mgr.GetFocus() }
     }
 
     fn GetCount(&self) -> WindowsResult<u32> {
