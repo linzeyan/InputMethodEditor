@@ -743,6 +743,12 @@ impl Engine {
 
     /// Runs a command from the menu or a language bar button.
     pub(crate) fn on_command(&mut self, ui: &mut impl Frontend, id: u32) {
+        // A click comes without the keydown that reloads the config, and the
+        // toggles below save the whole of it: a stale copy would undo what
+        // the settings app saved since this app last had a key.
+        if let Err(error) = self.apply_config_if_changed(ui) {
+            error!("unable to load config: {error:#}");
+        }
         match id {
             ID_SWITCH_LANG => {
                 if let Err(error) = self.toggle_lang_mode(ui) {
