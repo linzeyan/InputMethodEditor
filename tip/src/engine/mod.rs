@@ -1314,9 +1314,9 @@ fn new_editor() -> Result<Editor> {
     )?)
 }
 
-/// The portable layout keeps the dictionary beside the per-architecture DLL
-/// folders (`<root>\x64\chewing_tip.dll`, `<root>\x86\...`, `<root>\Dictionary`),
-/// so the folder works wherever it was unzipped.
+/// The package keeps the dictionary beside the per-architecture DLL folders
+/// (`<root>\x64\chewing_tip.dll`, `<root>\x86\...`, `<root>\Dictionary`), so
+/// it is found wherever the package is installed.
 fn dictionary_dir() -> Result<PathBuf> {
     let module = HMODULE(G_HINSTANCE.load(Ordering::Relaxed) as *mut c_void);
     let mut buf = vec![0u16; 32768];
