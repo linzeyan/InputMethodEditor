@@ -32,7 +32,7 @@ use chewing::input::keymap::{
     INVERTED_DVORAK_MAP, INVERTED_QGMLWY_MAP, INVERTED_WORKMAN_MAP,
 };
 use chewing::input::keysym::{
-    Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE,
+    Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_ESC, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE,
 };
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
@@ -419,13 +419,21 @@ impl Engine {
             return self.show_edit(ui, Some(phrase));
         }
 
-        if self.cfg.chewing_tsf.pinyin
-            && self.chewing_editor.entering_syllable()
-            && !match Scheme::from_config(self.cfg.chewing_tsf.shuangpin) {
+        let takes = if self.cfg.chewing_tsf.pinyin {
+            match Scheme::from_config(self.cfg.chewing_tsf.shuangpin) {
                 Some(scheme) => shuangpin::takes(scheme, &evt),
                 None => pinyin::takes(&evt),
             }
-        {
+        } else {
+            // Toneless zhuyin leaves the last syllable waiting like pinyin:
+            // chewing ignores Enter then, and reads Shift+, as ㄝ. Space ends
+            // a syllable in every layout. With tones typed, a lone syllable is
+            // still unfinished, so the other engines keep chewing's way.
+            self.cfg.chewing_tsf.conv_engine != 2
+                || matches!(evt.ksym, SYM_BACKSPACE | SYM_ESC | SYM_CAPSLOCK)
+                || !evt.has_modifiers() && evt.ksym.is_unicode()
+        };
+        if self.chewing_editor.entering_syllable() && !takes {
             self.chewing_editor.process_keyevent(pinyin::end_syllable());
         }
 

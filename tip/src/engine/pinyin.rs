@@ -8,6 +8,7 @@ use std::fmt::{self, Display};
 
 use chewing::editor::zhuyin_layout::{KeyBehavior, Pinyin, SyllableEditor};
 use chewing::input::KeyboardEvent;
+use chewing::input::keycode::KEY_SPACE;
 use chewing::input::keysym::{Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_ESC, SYM_SPACE};
 use chewing::syl;
 use chewing::zhuyin::{
@@ -161,9 +162,13 @@ pub(super) fn takes(key: &KeyboardEvent) -> bool {
             && matches!(key.ksym.to_unicode(), 'a'..='z' | ' ' | '\'' | '1'..='5')
 }
 
-/// The key that ends the syllable being typed.
+/// The key that ends the syllable being typed. Pinyin reads the symbol, most
+/// zhuyin layouts the key's code, so it carries both.
 pub(super) fn end_syllable() -> KeyboardEvent {
-    KeyboardEvent::builder().ksym(SYM_SPACE).build()
+    KeyboardEvent::builder()
+        .code(KEY_SPACE)
+        .ksym(SYM_SPACE)
+        .build()
 }
 
 /// The fuzzy sound pairs as spelled.
@@ -384,6 +389,37 @@ mod tests {
         for ascii in *b"o " {
             editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
         }
+        assert_eq!(editor.display(), "你好");
+    }
+
+    #[test]
+    fn end_syllable_ends_toneless_zhuyin() {
+        let mut strings = StringTableBuilder::new();
+        strings.insert("你好");
+        strings.insert("擬");
+        strings.insert("好");
+        let strings = strings.build();
+        let mut dict = StaticDictBuilder::new();
+        let ni = syl![bpmf::N, bpmf::I, bpmf::TONE3];
+        let hao = syl![bpmf::H, bpmf::AU, bpmf::TONE3];
+        dict.insert(&[ni, hao], strings.get_wid("你好").unwrap());
+        dict.insert(&[ni], strings.get_wid("擬").unwrap());
+        dict.insert(&[hao], strings.get_wid("好").unwrap());
+        let mut editor = EditorBuilder::new()
+            .string_table(strings)
+            .static_dict(dict.build())
+            .build();
+        editor.set_editor_options(|opt| {
+            opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
+        });
+        // ㄋㄧㄏㄠ on the standard layout, which reads key codes.
+        for ascii in *b"sucl" {
+            editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+        }
+        assert!(editor.entering_syllable());
+        // Otherwise Enter would be ignored and Shift+, typed as ㄝ.
+        editor.process_keyevent(super::end_syllable());
+        assert!(!editor.entering_syllable());
         assert_eq!(editor.display(), "你好");
     }
 
