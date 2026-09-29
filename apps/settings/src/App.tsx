@@ -68,6 +68,11 @@ const useStyles = makeStyles({
       gridTemplateColumns: "50% 1fr",
     },
   },
+  // Tooltip's trigger: a Checkbox hands pointer events to its hidden input,
+  // which covers only the box and takes none while disabled.
+  hint: {
+    width: "fit-content",
+  },
   action: {
     position: "absolute",
     bottom: "-4em",
@@ -108,13 +113,11 @@ function sel_key_type_to_value(sel_key_type: number | undefined): string {
 function conv_engine_to_value(conv_engine: number | undefined): string {
   switch (conv_engine) {
     case 0:
-      return "簡單注音";
-    case 1:
-      return "智慧選詞";
+      return "逐字選字";
     case 2:
-      return "模糊智慧選詞";
+      return "智慧選詞（可省略聲調，連打）";
     default:
-      return "智慧選詞";
+      return "智慧選詞（每個字打聲調）";
   }
 }
 
@@ -179,6 +182,10 @@ function keyboard_layout_to_value(layout: number): string {
       return "標準鍵盤";
   }
 }
+
+// Every color field takes the same format.
+const RGBA =
+  "格式是十六進位 RRGGBBAA，最後兩位是不透明度（FF 為完全不透明），例如 000000FF 是黑色。";
 
 function App() {
   const styles = useStyles();
@@ -422,161 +429,306 @@ const InputBehaviors = ({
     aria-labelledby="InputBehaviors"
   >
     <div className={styles.column}>
-      <Checkbox
-        label="使用 Shift 快速切換中英文"
-        name="switch_lang_with_shift"
-        disabled={config?.enable_caps_lock}
-        checked={config?.switch_lang_with_shift}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="使用 CapsLock 快速切換中英文"
-        name="enable_caps_lock"
-        checked={config?.enable_caps_lock}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="顯示中/英切換通知訊息"
-        name="show_notification"
-        checked={config?.show_notification}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="使用 Esc 清空編輯區字串"
-        name="esc_clean_all_buf"
-        checked={config?.esc_clean_all_buf}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="使用 Shift 輸入全形標點符號"
-        name="full_shape_symbols"
-        checked={config?.full_shape_symbols}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="按住 Shift 輸入大寫英文字母"
-        name="upper_case_with_shift"
-        checked={config?.upper_case_with_shift}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="Ctrl + 數字儲存游標前方的詞"
-        name="add_phrase_forward"
-        checked={config?.add_phrase_forward}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="啟用向後詞彙選詞模式"
-        name="phrase_choice_rearward"
-        checked={config?.phrase_choice_rearward}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="按住 Shift 輸入快捷符號"
-        name="easy_symbols_with_shift"
-        checked={config?.easy_symbols_with_shift}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="按住 Shift + Ctrl 輸入快捷符號"
-        name="easy_symbols_with_shift_ctrl"
-        checked={config?.easy_symbols_with_shift_ctrl}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="自動學習常用詞與新詞"
-        name="enable_auto_learn"
-        checked={config?.enable_auto_learn}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="依照常用程度排序手動選字選單"
-        name="sort_candidates_by_frequency"
-        checked={config?.sort_candidates_by_frequency}
-        onChange={setBooleanConfig}
-      />
+      <Tooltip
+        content="單獨按一下 Shift（不和其他鍵一起按）就切換中文／英文；按住超過「進階設定」的長壓時間則不切換。使用 CapsLock 切換時停用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用 Shift 快速切換中英文"
+            name="switch_lang_with_shift"
+            disabled={config?.enable_caps_lock}
+            checked={config?.switch_lang_with_shift}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="改用 CapsLock 切換中文／英文：中英由 CapsLock 燈號決定，亮燈是哪一種在「進階設定」調整。勾選後「使用 Shift 快速切換中英文」與「預設以英文模式啟動」停用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用 CapsLock 快速切換中英文"
+            name="enable_caps_lock"
+            checked={config?.enable_caps_lock}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="切換中文／英文、正體／簡體、注音／拼音時，短暫顯示一個小視窗告訴你現在的模式。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="顯示中/英切換通知訊息"
+            name="show_notification"
+            checked={config?.show_notification}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="組字中按 Esc 清掉所有還沒送出的字。不勾選時，Esc 只清掉正在打的注音或拼音，已轉好的字保留。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用 Esc 清空編輯區字串"
+            name="esc_clean_all_buf"
+            checked={config?.esc_clean_all_buf}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="中文模式下 Shift＋標點鍵打出全形符號，例如 Shift＋1 是「！」；不勾選則是半形「!」。勾選「按住 Shift 輸入快捷符號」時一律是全形，這項停用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用 Shift 輸入全形標點符號"
+            name="full_shape_symbols"
+            disabled={config?.easy_symbols_with_shift}
+            checked={config?.full_shape_symbols}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="中文模式下 Shift＋字母打出英文字母：勾選是大寫（A），不勾選是小寫（a）。勾選「按住 Shift 輸入快捷符號」時 Shift＋字母打的是快捷符號，這項停用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="按住 Shift 輸入大寫英文字母"
+            name="upper_case_with_shift"
+            disabled={config?.easy_symbols_with_shift}
+            checked={config?.upper_case_with_shift}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="組字中按 Ctrl＋2～9，把游標前面的 2～9 個字加入使用者詞庫，之後就能整個詞一起打出來；不勾選則是游標後面的字。例如打完「新酷音輸入法」按 Ctrl＋3，加入「輸入法」。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="Ctrl + 數字儲存游標前方的詞"
+            name="add_phrase_forward"
+            checked={config?.add_phrase_forward}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="決定組字中按 ↓ 選字時，候選是哪一段的詞。不勾選：從游標所在的字往後，游標在最後時只有最後一個字；勾選：到游標所在的字為止往前。例如打完「我覺得」直接按 ↓，不勾選列出「得、德…」，勾選列出「覺得」。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="啟用向後詞彙選詞模式"
+            name="phrase_choice_rearward"
+            checked={config?.phrase_choice_rearward}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="中文模式下 Shift＋字母打出「快捷符號」頁設定的符號，例如 Shift＋A 是「【」。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="按住 Shift 輸入快捷符號"
+            name="easy_symbols_with_shift"
+            checked={config?.easy_symbols_with_shift}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="中文模式下 Ctrl＋Shift＋字母打出「快捷符號」頁設定的符號。只勾這一項時，Shift＋字母仍然打英文字母。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="按住 Shift + Ctrl 輸入快捷符號"
+            name="easy_symbols_with_shift_ctrl"
+            checked={config?.easy_symbols_with_shift_ctrl}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="送出文字時記住你打過的詞和選過的字，之後整句轉換會優先用它們。關閉後不再學習，已學到的保留，可在「編輯使用者詞庫」管理。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="自動學習常用詞與新詞"
+            name="enable_auto_learn"
+            checked={config?.enable_auto_learn}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="按 ↓ 叫出的候選依常用程度排序（字典的統計加上你的使用習慣），常用的在前面；不勾選時依字典的固定順序。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="依照常用程度排序手動選字選單"
+            name="sort_candidates_by_frequency"
+            checked={config?.sort_candidates_by_frequency}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
     </div>
     <div className={styles.column}>
-      <Checkbox
-        label="使用方向鍵移動游標選字"
-        name="cursor_cand_list"
-        checked={config?.cursor_cand_list}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="按空白鍵叫出選字視窗"
-        name="show_cand_with_space_key"
-        checked={config?.show_cand_with_space_key}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="選字完畢自動跳到下一個字"
-        name="advance_after_selection"
-        checked={config?.advance_after_selection}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="預設以英文模式啟動"
-        name="default_english"
-        disabled={config?.enable_caps_lock}
-        checked={config?.default_english}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="預設輸出簡體中文（或使用 Ctrl + F12 切換）"
-        name="output_simp_chinese"
-        checked={config?.output_simp_chinese}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="簡體改用大陸用語，如 軟體→软件"
-        name="output_simp_vocabulary"
-        disabled={!config?.output_simp_chinese}
-        checked={config?.output_simp_vocabulary}
-        onChange={setBooleanConfig}
-      />
-      <Checkbox
-        label="以漢語拼音輸入（或使用 Ctrl + F11 切換）"
-        name="pinyin"
-        checked={config?.pinyin}
-        onChange={setBooleanConfig}
-      />
+      <Tooltip
+        content="選字視窗出現時，用方向鍵移動反白、按 Enter 選取；Ctrl＋Delete 忘記詞也需要這一項，作用在反白的那一個。不勾選時用選字鍵選字。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用方向鍵移動游標選字"
+            name="cursor_cand_list"
+            checked={config?.cursor_cand_list}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="注音組字中，打完一個字後按空白鍵叫出選字視窗，和 ↓ 相同。不勾選時，空白鍵把游標前的字改成一聲，連按兩下才打出空白。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="按空白鍵叫出選字視窗"
+            name="show_cand_with_space_key"
+            checked={config?.show_cand_with_space_key}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="按 ↓ 選好一個詞後，游標自動移到它後面，可以接著選下一段；不勾選時游標留在原處。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="選字完畢自動跳到下一個字"
+            name="advance_after_selection"
+            checked={config?.advance_after_selection}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="之後開啟的程式從英文模式開始，已開啟的程式不受影響。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="預設以英文模式啟動"
+            name="default_english"
+            disabled={config?.enable_caps_lock}
+            checked={config?.default_english}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="把打出的字轉成簡體字形，例如 軟體→软体。隨時可用 Ctrl＋F12 或右鍵選單切換，所有程式共用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="預設輸出簡體中文（或使用 Ctrl + F12 切換）"
+            name="output_simp_chinese"
+            checked={config?.output_simp_chinese}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="簡體輸出時連用語一起換成大陸說法，例如 軟體→软件、網際網路→互联网；不勾選只轉字形。需先勾選簡體輸出。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="簡體改用大陸用語，如 軟體→软件"
+            name="output_simp_vocabulary"
+            disabled={!config?.output_simp_chinese}
+            checked={config?.output_simp_vocabulary}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="改用漢語拼音輸入：直接連打、不用聲調，例如 nihao 是「你好」。模糊音與雙拼在「拼音」頁設定。隨時可用 Ctrl＋F11 切換，所有程式共用。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="以漢語拼音輸入（或使用 Ctrl + F11 切換）"
+            name="pinyin"
+            checked={config?.pinyin}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
       <div style={{ marginLeft: "10px", marginTop: "10px" }}>
-        <Field label="選字鍵：">
-          <Dropdown
-            value={sel_key_type_to_value(config?.sel_key_type)}
-            selectedOptions={[config?.sel_key_type.toString() || ""]}
-            onOptionSelect={(_ev, data) => {
-              setConfig({
-                ...config,
-                sel_key_type: parseInt(data.optionValue || "0"),
-              } as ChewingTsfConfig);
-            }}
-          >
-            <Option value="0">1234567890</Option>
-            <Option value="1">asdfghjkl;</Option>
-            <Option value="2">asdfzxcv89</Option>
-            <Option value="3">asdfjkl789</Option>
-            <Option value="4">aoeuhtn789</Option>
-            <Option value="5">1234qweras</Option>
-          </Dropdown>
-        </Field>
-        <Field label="模式：">
-          <Dropdown
-            value={conv_engine_to_value(config?.conv_engine)}
-            selectedOptions={[config?.conv_engine.toString() || ""]}
-            onOptionSelect={(_ev, data) => {
-              setConfig({
-                ...config,
-                conv_engine: parseInt(data.optionValue || "1"),
-              } as ChewingTsfConfig);
-            }}
-          >
-            <Option value="0">簡單注音</Option>
-            <Option value="1">智慧選詞</Option>
-            <Option value="2">模糊智慧選詞</Option>
-          </Dropdown>
-        </Field>
+        <Tooltip
+          content="選字視窗裡第 1、2、3… 個候選用哪些鍵選取。選 asdf 開頭的組合，手不用離開主鍵區。"
+          relationship="description"
+        >
+          <Field label="選字鍵：">
+            <Dropdown
+              value={sel_key_type_to_value(config?.sel_key_type)}
+              selectedOptions={[config?.sel_key_type.toString() || ""]}
+              onOptionSelect={(_ev, data) => {
+                setConfig({
+                  ...config,
+                  sel_key_type: parseInt(data.optionValue || "0"),
+                } as ChewingTsfConfig);
+              }}
+            >
+              <Option value="0">1234567890</Option>
+              <Option value="1">asdfghjkl;</Option>
+              <Option value="2">asdfzxcv89</Option>
+              <Option value="3">asdfjkl789</Option>
+              <Option value="4">aoeuhtn789</Option>
+              <Option value="5">1234qweras</Option>
+            </Dropdown>
+          </Field>
+        </Tooltip>
+        <Tooltip
+          content="注音怎麼轉成中文（拼音一律可省略聲調）。每個字打聲調：依整句自動挑字，一聲按空白。可省略聲調：ㄋㄧㄏㄠ 就是「你好」，最後一個字按空白、Enter 或標點結束；ˊˇˋ˙ 照樣有效，但空白不再限定一聲，例如 ㄉㄠ 加空白可能是「到」而不是「刀」。逐字選字：每打完一個字就跳出候選，不做整句轉換。"
+          relationship="description"
+        >
+          <Field label="注音模式：">
+            <Dropdown
+              value={conv_engine_to_value(config?.conv_engine)}
+              selectedOptions={[config?.conv_engine.toString() || ""]}
+              onOptionSelect={(_ev, data) => {
+                setConfig({
+                  ...config,
+                  conv_engine: parseInt(data.optionValue || "1"),
+                } as ChewingTsfConfig);
+              }}
+            >
+              <Option value="1">智慧選詞（每個字打聲調）</Option>
+              <Option value="2">智慧選詞（可省略聲調，連打）</Option>
+              <Option value="0">逐字選字</Option>
+            </Dropdown>
+          </Field>
+        </Tooltip>
         <details
           open={showAdvanced}
           onToggle={(ev) => setShowAdvanced(ev.currentTarget.open)}
@@ -585,8 +737,8 @@ const InputBehaviors = ({
             進階設定...
           </summary>
           <Tooltip
-            content="設定按住 Shift 鍵的時間長度，超過此時間視為長壓，取消切換中英模式。"
-            relationship={"label"}
+            content="單獨按住 Shift 超過這個時間才放開，視為長壓，不切換中英文。"
+            relationship="description"
           >
             <Field
               label={`Shift 長壓敏感度：${config?.shift_key_sensitivity || 200} ms`}
@@ -606,23 +758,32 @@ const InputBehaviors = ({
             </Field>
           </Tooltip>
           <Tooltip
-            content="調整 CapsLock 亮燈是中文還是英文。CapsLock 亮燈鎖定中文與各種軟體有較好的相容性。"
-            relationship={"label"}
+            content="勾選時 CapsLock 亮燈是中文、熄燈是英文；不勾選則相反。亮燈鎖定中文與各種軟體的相容性較好。需先勾選「使用 CapsLock 快速切換中英文」。"
+            relationship="description"
           >
-            <Checkbox
-              label="CapsLock 亮燈鎖定中文"
-              disabled={!config?.enable_caps_lock}
-              name="lock_chinese_on_caps_lock"
-              checked={config?.lock_chinese_on_caps_lock}
-              onChange={setBooleanConfig}
-            />
+            <div className={styles.hint}>
+              <Checkbox
+                label="CapsLock 亮燈鎖定中文"
+                disabled={!config?.enable_caps_lock}
+                name="lock_chinese_on_caps_lock"
+                checked={config?.lock_chinese_on_caps_lock}
+                onChange={setBooleanConfig}
+              />
+            </div>
           </Tooltip>
-          <Checkbox
-            label="設定英文模式等於關閉鍵盤"
-            name="sync_lang_mode_openclose"
-            checked={config?.sync_lang_mode_openclose}
-            onChange={setBooleanConfig}
-          />
+          <Tooltip
+            content="切到英文模式時，也把 Windows 的輸入法開關設為關閉，和按 Ctrl＋Space 關閉輸入法相同。只有依這個開關判斷輸入法狀態的程式才需要，一般不用勾選。"
+            relationship="description"
+          >
+            <div className={styles.hint}>
+              <Checkbox
+                label="設定英文模式等於關閉鍵盤"
+                name="sync_lang_mode_openclose"
+                checked={config?.sync_lang_mode_openclose}
+                onChange={setBooleanConfig}
+              />
+            </div>
+          </Tooltip>
         </details>
       </div>
     </div>
@@ -723,63 +884,88 @@ const Appearance = ({
       aria-labelledby="Appearance"
     >
       <div className={styles.column}>
-        <Field label="每列顯示後選字個數：">
-          <SpinButton
-            value={config?.cand_per_row}
-            min={1}
-            max={10}
-            step={1}
-            onChange={setNumberConfig("cand_per_row", 3)}
-          />
-        </Field>
-        <Field label="每頁顯示後選字個數：">
-          <SpinButton
-            value={config?.cand_per_page}
-            min={1}
-            max={10}
-            step={1}
-            onChange={setNumberConfig("cand_per_page", 9)}
-          />
-        </Field>
-        <Field label="選字及訊息視窗文字大小：">
-          <SpinButton
-            value={config?.font_size}
-            step={1}
-            onChange={setNumberConfig("font_size", 16)}
-          />
-        </Field>
-        <Field label="選字視窗字型：">
-          <Combobox
-            value={mapFontDisplayName(config?.font_family)}
-            selectedOptions={[config?.font_family || ""]}
-            onOptionSelect={(_ev, data: OptionOnSelectData) => {
-              setConfig({
-                ...config,
-                font_family: data.optionValue,
-              } as ChewingTsfConfig);
-            }}
-          >
-            {systemFonts.map((font: FontFamilyName) =>
-              apply_font_style ? (
-                <Option value={font.name} style={{ fontFamily: font.name }}>
-                  {font.display_name}
-                </Option>
-              ) : (
-                <Option value={font.name}>{font.display_name}</Option>
-              ),
-            )}
-          </Combobox>
-        </Field>
-        <Field label="色彩佈景主題：">
-          <Select
-            value={determineColorTheme(config)}
-            onChange={selectColorTheme}
-          >
-            <option value="dark">深色主題</option>
-            <option value="light">淺色主題</option>
-            <option value="custom">自訂</option>
-          </Select>
-        </Field>
+        <Tooltip
+          content="選字視窗每一列排幾個候選，排不下的換到下一列。設為 1 就是直的一排。"
+          relationship="description"
+        >
+          <Field label="每列顯示後選字個數：">
+            <SpinButton
+              value={config?.cand_per_row}
+              min={1}
+              max={10}
+              step={1}
+              onChange={setNumberConfig("cand_per_row", 3)}
+            />
+          </Field>
+        </Tooltip>
+        <Tooltip
+          content="選字視窗一頁最多幾個候選，其餘的要翻頁；也決定用到幾個選字鍵。"
+          relationship="description"
+        >
+          <Field label="每頁顯示後選字個數：">
+            <SpinButton
+              value={config?.cand_per_page}
+              min={1}
+              max={10}
+              step={1}
+              onChange={setNumberConfig("cand_per_page", 9)}
+            />
+          </Field>
+        </Tooltip>
+        <Tooltip
+          content="選字視窗和切換模式時的訊息視窗的文字大小。"
+          relationship="description"
+        >
+          <Field label="選字及訊息視窗文字大小：">
+            <SpinButton
+              value={config?.font_size}
+              step={1}
+              onChange={setNumberConfig("font_size", 16)}
+            />
+          </Field>
+        </Tooltip>
+        <Tooltip
+          content="選字視窗和訊息視窗使用的字型。"
+          relationship="description"
+        >
+          <Field label="選字視窗字型：">
+            <Combobox
+              value={mapFontDisplayName(config?.font_family)}
+              selectedOptions={[config?.font_family || ""]}
+              onOptionSelect={(_ev, data: OptionOnSelectData) => {
+                setConfig({
+                  ...config,
+                  font_family: data.optionValue,
+                } as ChewingTsfConfig);
+              }}
+            >
+              {systemFonts.map((font: FontFamilyName) =>
+                apply_font_style ? (
+                  <Option value={font.name} style={{ fontFamily: font.name }}>
+                    {font.display_name}
+                  </Option>
+                ) : (
+                  <Option value={font.name}>{font.display_name}</Option>
+                ),
+              )}
+            </Combobox>
+          </Field>
+        </Tooltip>
+        <Tooltip
+          content="選字視窗和訊息視窗的配色。選「自訂」可在進階設定逐一調整每個顏色。"
+          relationship="description"
+        >
+          <Field label="色彩佈景主題：">
+            <Select
+              value={determineColorTheme(config)}
+              onChange={selectColorTheme}
+            >
+              <option value="dark">深色主題</option>
+              <option value="light">淺色主題</option>
+              <option value="custom">自訂</option>
+            </Select>
+          </Field>
+        </Tooltip>
         <details
           open={showAdvanced}
           onToggle={(ev) => setShowAdvanced(ev.currentTarget.open)}
@@ -789,80 +975,125 @@ const Appearance = ({
           </summary>
           <div className={styles.content}>
             <div className={styles.narrowColumn}>
-              <Field label="文字顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="font_fg_color"
-                  value={config?.font_fg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="選字背景顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="font_bg_color"
-                  value={config?.font_bg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="選字邊框顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="cand_list_border_color"
-                  value={config?.cand_list_border_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="焦點文字顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="font_highlight_fg_color"
-                  value={config?.font_highlight_fg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="焦點背景顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="font_highlight_bg_color"
-                  value={config?.font_highlight_bg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="數字顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="font_number_fg_color"
-                  value={config?.font_number_fg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
+              <Tooltip
+                content={`候選字的文字顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="文字顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="font_fg_color"
+                    value={config?.font_fg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`選字視窗的背景顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="選字背景顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="font_bg_color"
+                    value={config?.font_bg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`選字視窗的邊框顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="選字邊框顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="cand_list_border_color"
+                    value={config?.cand_list_border_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`用方向鍵反白的那個候選的文字顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="焦點文字顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="font_highlight_fg_color"
+                    value={config?.font_highlight_fg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`用方向鍵反白的那個候選的背景顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="焦點背景顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="font_highlight_bg_color"
+                    value={config?.font_highlight_bg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`候選前面選字鍵（1、2、3…）的顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="數字顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="font_number_fg_color"
+                    value={config?.font_number_fg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
             </div>
             <div className={styles.narrowColumn}>
-              <Field label="訊息文字顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="notify_fg_color"
-                  value={config?.notify_fg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="訊息背景顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="notify_bg_color"
-                  value={config?.notify_bg_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
-              <Field label="訊息邊框顏色 RGB(A)" orientation="horizontal">
-                <Input
-                  name="notify_border_color"
-                  value={config?.notify_border_color}
-                  style={{ width: "8em" }}
-                  onChange={setStringConfig}
-                />
-              </Field>
+              <Tooltip
+                content={`切換模式時訊息視窗的文字顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="訊息文字顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="notify_fg_color"
+                    value={config?.notify_fg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`切換模式時訊息視窗的背景顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="訊息背景顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="notify_bg_color"
+                    value={config?.notify_bg_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
+              <Tooltip
+                content={`切換模式時訊息視窗的邊框顏色。${RGBA}`}
+                relationship="description"
+              >
+                <Field label="訊息邊框顏色 RGB(A)" orientation="horizontal">
+                  <Input
+                    name="notify_border_color"
+                    value={config?.notify_border_color}
+                    style={{ width: "8em" }}
+                    onChange={setStringConfig}
+                  />
+                </Field>
+              </Tooltip>
             </div>
           </div>
         </details>
@@ -880,36 +1111,41 @@ const Layout = ({
 }) => (
   <div className={styles.content} role="tabpanel" aria-labelledby="Layout">
     <div className={styles.column}>
-      <Field label={`中文鍵盤布局：`}>
-        <Dropdown
-          value={keyboard_layout_to_value(config?.keyboard_layout || 0)}
-          selectedOptions={[config?.keyboard_layout?.toString() || "0"]}
-          onOptionSelect={(_ev, data) => {
-            setConfig({
-              ...config,
-              keyboard_layout: parseInt(data.optionValue || "0"),
-            } as ChewingTsfConfig);
-          }}
-        >
-          <Option value="0">標準鍵盤</Option>
-          <Option value="1">許氏鍵盤</Option>
-          <Option value="2">IBM 鍵盤</Option>
-          <Option value="3">精業鍵盤</Option>
-          <Option value="4">倚天鍵盤</Option>
-          <Option value="5">倚天 26 鍵</Option>
-          <Option value="6">Dvorak (掃描碼變換)</Option>
-          <Option value="7">Dvorak 許氏 (掃描碼變換)</Option>
-          <Option value="8">大千 26 鍵</Option>
-          <Option value="9">漢語拼音</Option>
-          <Option value="10">台灣華語羅馬拼音</Option>
-          <Option value="11">注音二式</Option>
-          <Option value="12">Carplx (掃描碼變換)</Option>
-          <Option value="16">Colemak (掃描碼變換)</Option>
-          <Option value="13">Colemak-DH ANSI (掃描碼變換)</Option>
-          <Option value="14">Colemak-DH Orth (掃描碼變換)</Option>
-          <Option value="15">Workman (掃描碼變換)</Option>
-        </Dropdown>
-      </Field>
+      <Tooltip
+        content="注音符號在鍵盤上的排列，照你習慣的注音鍵盤選，只在注音模式作用。標「掃描碼變換」的，是給 Windows 英文鍵盤設成 Dvorak、Colemak 等配置的人：注音仍在標準（或許氏）鍵盤的實體位置。「漢語拼音」「台灣華語羅馬拼音」「注音二式」是新酷音內建的逐字拼音，每個字要打聲調或空白；要連打拼音請改用「打字行為」的「以漢語拼音輸入」。"
+        relationship="description"
+      >
+        <Field label={`中文鍵盤布局：`}>
+          <Dropdown
+            value={keyboard_layout_to_value(config?.keyboard_layout || 0)}
+            selectedOptions={[config?.keyboard_layout?.toString() || "0"]}
+            onOptionSelect={(_ev, data) => {
+              setConfig({
+                ...config,
+                keyboard_layout: parseInt(data.optionValue || "0"),
+              } as ChewingTsfConfig);
+            }}
+          >
+            <Option value="0">標準鍵盤</Option>
+            <Option value="1">許氏鍵盤</Option>
+            <Option value="2">IBM 鍵盤</Option>
+            <Option value="3">精業鍵盤</Option>
+            <Option value="4">倚天鍵盤</Option>
+            <Option value="5">倚天 26 鍵</Option>
+            <Option value="6">Dvorak (掃描碼變換)</Option>
+            <Option value="7">Dvorak 許氏 (掃描碼變換)</Option>
+            <Option value="8">大千 26 鍵</Option>
+            <Option value="9">漢語拼音</Option>
+            <Option value="10">台灣華語羅馬拼音</Option>
+            <Option value="11">注音二式</Option>
+            <Option value="12">Carplx (掃描碼變換)</Option>
+            <Option value="16">Colemak (掃描碼變換)</Option>
+            <Option value="13">Colemak-DH ANSI (掃描碼變換)</Option>
+            <Option value="14">Colemak-DH Orth (掃描碼變換)</Option>
+            <Option value="15">Workman (掃描碼變換)</Option>
+          </Dropdown>
+        </Field>
+      </Tooltip>
       <details
         open={showAdvanced}
         onToggle={(ev) => setShowAdvanced(ev.currentTarget.open)}
@@ -918,8 +1154,8 @@ const Layout = ({
           進階設定...
         </summary>
         <Tooltip
-          content="模擬英文鍵盤布局可能會讓某些網頁快捷鍵失效"
-          relationship={"label"}
+          content="Windows 的鍵盤維持 QWERTY，英文模式時由輸入法把按鍵換成 Dvorak 等配置的字母。可能會讓某些網頁的快捷鍵失效。"
+          relationship="description"
         >
           <Field label={`模擬英文鍵盤布局：`}>
             <Dropdown
@@ -987,24 +1223,29 @@ const Pinyin = ({ config, styles, setConfig }) => {
   );
   return (
     <div role="tabpanel" aria-labelledby="Pinyin" style={{ margin: "16px" }}>
-      <Field label="拼法：" style={{ marginBottom: "16px", width: "50%" }}>
-        <Dropdown
-          value={SHUANGPIN[config.shuangpin]}
-          selectedOptions={[config.shuangpin.toString()]}
-          onOptionSelect={(_ev, data) =>
-            setConfig({
-              ...config,
-              shuangpin: parseInt(data.optionValue || "0"),
-            } as ChewingTsfConfig)
-          }
-        >
-          {SHUANGPIN.map((name, index) => (
-            <Option key={index} value={index.toString()}>
-              {name}
-            </Option>
-          ))}
-        </Dropdown>
-      </Field>
+      <Tooltip
+        content="全拼：照拼音的字母打，例如 shuang。雙拼：每個字固定兩鍵（聲母鍵＋韻母鍵），打完第二鍵就轉成中文，鍵位依方案而定。只在拼音模式作用。"
+        relationship="description"
+      >
+        <Field label="拼法：" style={{ marginBottom: "16px", width: "50%" }}>
+          <Dropdown
+            value={SHUANGPIN[config.shuangpin]}
+            selectedOptions={[config.shuangpin.toString()]}
+            onOptionSelect={(_ev, data) =>
+              setConfig({
+                ...config,
+                shuangpin: parseInt(data.optionValue || "0"),
+              } as ChewingTsfConfig)
+            }
+          >
+            {SHUANGPIN.map((name, index) => (
+              <Option key={index} value={index.toString()}>
+                {name}
+              </Option>
+            ))}
+          </Dropdown>
+        </Field>
+      </Tooltip>
       <Text>
         模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong
         也有「中」。只在拼音模式作用。

@@ -11,6 +11,7 @@ import {
   makeStyles,
   Select,
   SelectOnChangeData,
+  Tooltip,
 } from "@fluentui/react-components";
 import { DeleteRegular } from "@fluentui/react-icons";
 import { KeybindValue } from "./config";
@@ -133,13 +134,28 @@ function KeybindingTab(props: KeybindingTabProps) {
     <div className={styles.root}>
       <div className={styles.row}>
         <div className={styles.action}>
-          <Body1Strong>動作</Body1Strong>
+          <Tooltip
+            content="按下快捷鍵時做什麼。「輸入文字或符號」打出參數裡的文字；「忘掉選擇中詞彙」要在選字視窗用方向鍵反白一個詞時按，讓它不再優先出現。"
+            relationship="description"
+          >
+            <Body1Strong>動作</Body1Strong>
+          </Tooltip>
         </div>
         <div className={styles.param}>
-          <Body1Strong>參數</Body1Strong>
+          <Tooltip
+            content="只有「輸入文字或符號」用得到：按下快捷鍵時打出的文字。"
+            relationship="description"
+          >
+            <Body1Strong>參數</Body1Strong>
+          </Tooltip>
         </div>
         <div className={styles.key}>
-          <Body1Strong>快捷鍵</Body1Strong>
+          <Tooltip
+            content="用 + 連接修飾鍵和按鍵，例如 Ctrl+F12、Ctrl+Delete。修飾鍵：Ctrl、Shift、Alt；按鍵：單一字元、F1～F12、Esc、Tab、Enter、Space、Delete、Backspace、Home、End、CapsLock。"
+            relationship="description"
+          >
+            <Body1Strong>快捷鍵</Body1Strong>
+          </Tooltip>
         </div>
         <div className={styles.delete}>
           <Body1Strong>刪除</Body1Strong>
