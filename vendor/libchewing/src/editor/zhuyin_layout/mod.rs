@@ -198,7 +198,8 @@ pub trait SyllableEditor: Display + Debug {
     /// Handles a key press event and returns the behavior of the layout.
     ///
     /// If a syllable is completed prematurely due to fuzzy logic, a
-    /// `Fuzzy(Syllable)` will be returned.
+    /// `Fuzzy(Syllable)` will be returned. An initial typed alone stands for
+    /// any syllable it starts, as in pinyin: ㄐㄊ is 今天.
     fn fuzzy_key_press(&mut self, key: KeyboardEvent) -> KeyBehavior {
         if self.is_empty() {
             return self.key_press(key);
@@ -213,12 +214,20 @@ pub trait SyllableEditor: Display + Debug {
             || current_syl.has_rime()
                 && (new_syl.has_initial() || new_syl.has_medial() || new_syl.has_rime())
         {
-            let ret = KeyBehavior::Fuzzy(current_syl);
+            let ret = KeyBehavior::Fuzzy(abbreviate_initial(current_syl));
             self.clear();
             self.key_press(key);
             return ret;
         }
-        self.key_press(key)
+        match self.key_press(key) {
+            // Space after an initial: Commit would insert it as read.
+            KeyBehavior::Commit if abbreviate_initial(self.read()).is_abbreviation() => {
+                let syllable = abbreviate_initial(self.read());
+                self.clear();
+                KeyBehavior::Fuzzy(syllable)
+            }
+            behavior => behavior,
+        }
     }
     /// Removes the last input from the buffer.
     fn remove_last(&mut self);
@@ -239,4 +248,58 @@ pub trait SyllableEditor: Display + Debug {
     }
     // Returns a copy of the SyllableEditor
     fn clone(&self) -> Box<dyn SyllableEditor>;
+}
+
+/// An initial with nothing after it, no tone either, as an abbreviation.
+/// ㄓ alone is a whole syllable too, but the abbreviation takes that in.
+fn abbreviate_initial(syllable: Syllable) -> Syllable {
+    if syllable.has_initial()
+        && !syllable.has_medial()
+        && !syllable.has_rime()
+        && !syllable.has_tone()
+    {
+        syllable.abbreviate()
+    } else {
+        syllable
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{KeyBehavior, Standard, SyllableEditor};
+    use crate::input::keymap::{QWERTY_MAP, map_ascii};
+    use crate::syl;
+    use crate::zhuyin::Bopomofo::*;
+
+    fn press(editor: &mut Standard, keys: &str) -> Vec<KeyBehavior> {
+        keys.bytes()
+            .map(|key| editor.fuzzy_key_press(map_ascii(&QWERTY_MAP, key)))
+            .collect()
+    }
+
+    #[test]
+    fn fuzzy_initials_alone_abbreviate() {
+        let mut editor = Standard::new();
+        // ㄐㄊ: the next initial ends ㄐ, and Space ends ㄊ.
+        assert_eq!(
+            press(&mut editor, "rw "),
+            [
+                KeyBehavior::Absorb,
+                KeyBehavior::Fuzzy(syl![J].abbreviate()),
+                KeyBehavior::Fuzzy(syl![T].abbreviate()),
+            ]
+        );
+        assert!(editor.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_whole_syllables_and_tones_stay() {
+        let mut editor = Standard::new();
+        // ㄋㄧ is spelled out, so it means itself in any tone.
+        assert_eq!(press(&mut editor, "suc")[2], KeyBehavior::Fuzzy(syl![N, I]));
+        editor.clear();
+        // With a tone, ㄕ is 是 and the like, not an abbreviation.
+        assert_eq!(press(&mut editor, "g4")[1], KeyBehavior::Commit);
+        assert_eq!(editor.read(), syl![SH, TONE4]);
+    }
 }

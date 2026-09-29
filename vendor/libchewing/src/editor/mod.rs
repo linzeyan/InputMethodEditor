@@ -1516,7 +1516,13 @@ impl State for EnteringSyllable {
                         if !shared.dict.lookup(&[syl], lookup_strategy).is_empty() {
                             shared.com.insert(Symbol::from(syl));
                         }
-                        self.spin_absorb()
+                        // With nothing typed after it, the syllable ended as
+                        // on Commit, and Enter or punctuation is for the text.
+                        if shared.syl.is_empty() {
+                            self.start_entering()
+                        } else {
+                            self.spin_absorb()
+                        }
                     }
                     KeyBehavior::Commit => {
                         if !shared
@@ -2747,5 +2753,41 @@ mod tests {
         editor.unlearn_phrase(&[zhong, guo], "中國").unwrap();
         assert!(learned(&[zhong, guo2]).is_empty());
         assert_eq!(learned(&[zhong, guo]), ["中鍋"]);
+    }
+
+    #[test]
+    fn zhuyin_initials_convert_and_commit_with_enter() {
+        let mut builder = StringTableBuilder::new();
+        for word in ["今", "天", "今天"] {
+            builder.insert(word);
+        }
+        let st = builder.build();
+        let jin = syl![bpmf::J, bpmf::I, bpmf::EN, bpmf::TONE1];
+        let tian = syl![bpmf::T, bpmf::I, bpmf::AN, bpmf::TONE1];
+        let mut dict_builder = StaticDictBuilder::new();
+        dict_builder.insert(&[jin], st.get_wid("今").unwrap());
+        dict_builder.insert(&[tian], st.get_wid("天").unwrap());
+        dict_builder.insert(&[jin, tian], st.get_wid("今天").unwrap());
+        let mut editor = EditorBuilder::new()
+            .string_table(st)
+            .static_dict(dict_builder.build())
+            .build();
+        editor.set_editor_options(|opt| {
+            opt.conversion_engine = ConversionEngineKind::FuzzyChewingEngine
+        });
+
+        // ㄐㄊ, the last initial ended with Space.
+        for key in *b"rw " {
+            editor.process_keyevent(map_ascii(&QWERTY_MAP, key));
+        }
+        assert_eq!(editor.display(), "今天");
+        // Left waiting for a syllable, chewing would ignore Enter.
+        editor.process_keyevent(
+            KeyboardEvent::builder()
+                .code(keycode::KEY_ENTER)
+                .ksym(keysym::SYM_RETURN)
+                .build(),
+        );
+        assert_eq!(editor.display_commit(), "今天");
     }
 }
