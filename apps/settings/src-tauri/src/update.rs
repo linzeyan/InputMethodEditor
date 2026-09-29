@@ -7,16 +7,19 @@
 use std::error::Error;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{env, fs};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{env, fs, thread};
 
 use chewing_tip_core::PRODUCT_NAME;
 use chewing_tip_core::config::Config;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use windows::Win32::System::SystemInformation::GetTickCount;
+use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::WindowsAndMessaging::{
-    IDYES, MB_ICONERROR, MB_ICONINFORMATION, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO,
-    MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
+    GetForegroundWindow, GetWindowThreadProcessId, IDYES, MB_ICONERROR, MB_ICONINFORMATION,
+    MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
 };
 use windows::core::HSTRING;
 use windows_registry::CURRENT_USER;
@@ -51,12 +54,9 @@ fn check() -> Result<()> {
     let key = CURRENT_USER.create(format!(r"Software\{PRODUCT_NAME}"))?;
     // Kept out of Config: the settings app saves all of it, stale copy included.
     let last = key.get_u64("LastUpdateCheck").unwrap_or(0);
-    let days = Config::from_reg()
-        .unwrap_or_default()
-        .chewing_tsf
-        .update_check_days;
+    let config = Config::from_reg().unwrap_or_default().chewing_tsf;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    if !due(last, now, days) {
+    if !config.check_update || !due(last, now, config.update_check_days) {
         return Ok(());
     }
     let release: Release = serde_json::from_slice(&curl(&[LATEST_RELEASE])?)?;
@@ -128,16 +128,49 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
 }
 
 fn show(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
-    // Windows keeps what the task scheduler starts from taking the foreground:
-    // the box waits behind the window in use with its taskbar button flashing,
-    // so a key typed there can't answer it.
+    wait_until_idle();
     unsafe {
-        MessageBoxW(
+        // Windows keeps what the task scheduler starts from taking the
+        // foreground, leaving the box behind the window in use. Sharing that
+        // window's input lets it come forward.
+        // ponytail: shared while the box is up, so a hung program in front
+        // would stall the box too; detach on the box's activation if that bites.
+        let this = GetCurrentThreadId();
+        let front = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        let attached =
+            front != 0 && front != this && AttachThreadInput(this, front, true).as_bool();
+        let result = MessageBoxW(
             None,
             &HSTRING::from(text),
             &HSTRING::from(PRODUCT_NAME),
             style | MB_SETFOREGROUND | MB_TOPMOST,
-        )
+        );
+        if attached {
+            let _ = AttachThreadInput(this, front, false);
+        }
+        result
+    }
+}
+
+/// Waits for two seconds without a key press or click: taking the keyboard,
+/// the box would read the next key of someone typing (Space, Enter, y) as an
+/// answer.
+fn wait_until_idle() {
+    loop {
+        let mut input = LASTINPUTINFO {
+            cbSize: size_of::<LASTINPUTINFO>() as u32,
+            dwTime: 0,
+        };
+        let idle = unsafe {
+            if !GetLastInputInfo(&mut input).as_bool() {
+                return;
+            }
+            GetTickCount().wrapping_sub(input.dwTime)
+        };
+        if idle >= 2000 {
+            return;
+        }
+        thread::sleep(Duration::from_millis(u64::from(2000 - idle)));
     }
 }
 

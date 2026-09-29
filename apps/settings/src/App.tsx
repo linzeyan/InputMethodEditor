@@ -402,7 +402,12 @@ function App() {
         <KeybindingTab keybind={config.keybind} setKeybind={setKeybind} />
       )}
       {selectedTab === "update" && config && (
-        <Update config={config} setNumberConfig={setNumberConfig} />
+        <Update
+          config={config}
+          styles={styles}
+          setBooleanConfig={setBooleanConfig}
+          setNumberConfig={setNumberConfig}
+        />
       )}
       <div className={styles.action}>
         <Button
@@ -1266,10 +1271,23 @@ const Pinyin = ({ config, styles, setConfig }) => {
   );
 };
 
-const Update = ({ config, setNumberConfig }) => (
+const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => (
   <div role="tabpanel" aria-labelledby="Update" style={{ margin: "16px" }}>
     <Tooltip
-      content="登入後和每天中午，看 GitHub 上有沒有新版本，但距離上次查看要滿這麼多天。有新版本時會詢問是否下載安裝，同意才下載。"
+      content="登入後和每天中午，看 GitHub 上有沒有新版本；有新版本時會跳出詢問，同意才下載安裝。取消勾選就不再連到 GitHub，要更新時自己下載新版的安裝檔。"
+      relationship="description"
+    >
+      <div className={styles.hint}>
+        <Checkbox
+          label="自動檢查更新"
+          name="check_update"
+          checked={config.check_update}
+          onChange={setBooleanConfig}
+        />
+      </div>
+    </Tooltip>
+    <Tooltip
+      content="距離上次查看要滿這麼多天才會再查，1 到 30 天。"
       relationship="description"
     >
       <Field label="每隔幾天檢查一次新版本：" style={{ width: "50%" }}>
@@ -1278,6 +1296,7 @@ const Update = ({ config, setNumberConfig }) => (
           min={1}
           max={30}
           step={1}
+          disabled={!config.check_update}
           onChange={setNumberConfig("update_check_days", 7)}
         />
       </Field>

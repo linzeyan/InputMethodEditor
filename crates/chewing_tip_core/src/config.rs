@@ -97,6 +97,8 @@ pub struct ChewingTsfConfig {
     pub simulate_english_layout: i32,
     pub sync_lang_mode_openclose: bool,
     pub keybind: Vec<KeybindValue>,
+    /// Whether the settings app looks for a new release.
+    pub check_update: bool,
     /// Days between the settings app's checks for a new release, 1 to 30.
     pub update_check_days: i32,
     pub modified_timestamp: u64,
@@ -163,6 +165,7 @@ impl Default for ChewingTsfConfig {
                     param: "".to_string(),
                 },
             ],
+            check_update: true,
             update_check_days: 7,
             modified_timestamp: 0,
         }
@@ -320,6 +323,9 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "UpperCaseWithShift") {
                 cfg.upper_case_with_shift = value;
             }
+            if let Ok(value) = reg_get_bool(&key, "CheckUpdate") {
+                cfg.check_update = value;
+            }
             if let Ok(value) = reg_get_i32(&key, "UpdateCheckDays") {
                 cfg.update_check_days = value;
             }
@@ -469,6 +475,7 @@ impl Config {
             chewing_tsf.upper_case_with_shift,
         );
         let _ = reg_set_bool(&key, "EnableAutoLearn", chewing_tsf.enable_auto_learn);
+        let _ = reg_set_bool(&key, "CheckUpdate", chewing_tsf.check_update);
         let _ = reg_set_i32(&key, "UpdateCheckDays", chewing_tsf.update_check_days);
         let _ = key.set_multi_string(
             "Keybind".to_string(),
