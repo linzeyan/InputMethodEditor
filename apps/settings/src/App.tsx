@@ -639,7 +639,7 @@ const InputBehaviors = ({
         </div>
       </Tooltip>
       <Tooltip
-        content="之後開啟的程式從英文模式開始，已開啟的程式不受影響。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
+        content="每個程式會記住上次切到的中文或英文，下次開啟時沿用；這項決定還沒切換過的程式從哪個模式開始。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
         relationship="description"
       >
         <div className={styles.hint}>

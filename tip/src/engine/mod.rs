@@ -11,7 +11,7 @@ pub(crate) mod shuangpin;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{OsString, c_void};
-use std::fs;
+use std::{env, fs};
 use std::io::ErrorKind;
 use std::mem;
 use std::os::windows::ffi::OsStringExt;
@@ -36,8 +36,8 @@ use chewing::input::keysym::{
 };
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
-use chewing_tip_core::SETTINGS_SCHEME;
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
+use chewing_tip_core::{PRODUCT_NAME, SETTINGS_SCHEME};
 use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use log::{debug, error, info};
@@ -49,6 +49,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     CheckMenuItem, HICON, HMENU, MF_CHECKED, MF_UNCHECKED,
 };
 use windows_core::{ComObject, HSTRING};
+use windows_registry::CURRENT_USER;
 use zhconv::{Variant, zhconv};
 
 use self::key_event::{KeymapOp, SimulatedKeyboard, SystemKeyboardEvent};
@@ -1107,6 +1108,7 @@ impl Engine {
         self.sync_lang_mode(ui)?;
 
         if prev != self.lang_mode.get() {
+            remember_english(matches!(self.lang_mode.get(), TsfLangMode::English));
             self.chewing_editor.clear_syllable_editor();
             self.update_preedit(ui, String::new())?;
         }
@@ -1196,7 +1198,8 @@ impl Engine {
 
     /// Initializes the config to the user default
     fn apply_init_config(&mut self, ui: &impl Frontend) -> Result<()> {
-        self.lang_mode.set(if self.cfg.chewing_tsf.default_english {
+        let english = remembered_english().unwrap_or(self.cfg.chewing_tsf.default_english);
+        self.lang_mode.set(if english {
             TsfLangMode::English
         } else {
             TsfLangMode::Chinese
@@ -1299,6 +1302,30 @@ fn load_phrases() -> HashMap<String, String> {
         error!("{PHRASES_FILE}: {error}");
         HashMap::new()
     })
+}
+
+/// The Chinese/English mode each program was last switched to, by executable
+/// name, so that one opened again starts there (the engine lives only as long
+/// as the program). Kept out of Config, which the settings app saves whole.
+fn app_modes_key() -> String {
+    format!(r"Software\{PRODUCT_NAME}\AppModes")
+}
+
+fn app_name() -> Option<String> {
+    Some(env::current_exe().ok()?.file_name()?.to_str()?.to_lowercase())
+}
+
+fn remembered_english() -> Option<bool> {
+    let key = CURRENT_USER.open(app_modes_key()).ok()?;
+    Some(key.get_u32(app_name()?).ok()? != 0)
+}
+
+fn remember_english(english: bool) {
+    // Store apps and low-integrity programs can't write there; they only
+    // start in the default mode next time.
+    if let (Ok(key), Some(name)) = (CURRENT_USER.create(app_modes_key()), app_name()) {
+        let _ = key.set_u32(name, english.into());
+    }
 }
 
 fn new_editor() -> Result<Editor> {
