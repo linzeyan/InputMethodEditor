@@ -660,7 +660,8 @@ impl Engine {
         ui: &mut impl Frontend,
         ev: SystemKeyboardEvent,
     ) -> Result<bool> {
-        if self.lang_mode.get().is_disabled() {
+        let ksym = ev.to_keyboard_event(self.keymap).ksym;
+        if self.lang_mode.get().is_disabled() && ksym != SYM_LEFTSHIFT && ksym != SYM_RIGHTSHIFT {
             return Ok(false);
         }
         self.on_keyup(ui, ev)
@@ -684,7 +685,7 @@ impl Engine {
             && self.cfg.chewing_tsf.switch_lang_with_shift
         {
             // TODO: simplify this
-            if self.cfg.chewing_tsf.enable_caps_lock {
+            if self.cfg.chewing_tsf.enable_caps_lock && !self.lang_mode.get().is_disabled() {
                 // Locked by CapsLock
                 let msg = match self.lang_mode.get() {
                     TsfLangMode::English => "CapsLock 鎖定英數模式",
@@ -726,12 +727,15 @@ impl Engine {
         Ok(false)
     }
 
-    pub(crate) fn toggle_keyboard_openclose(&self) {
-        self.lang_mode.update(|mode| match mode {
-            TsfLangMode::Chinese => TsfLangMode::DisabledChinese,
-            TsfLangMode::English => TsfLangMode::DisabledEnglish,
-            TsfLangMode::DisabledChinese => TsfLangMode::Chinese,
-            TsfLangMode::DisabledEnglish => TsfLangMode::English,
+    /// Follows the keyboard's open/close state, which Ctrl+Space and programs
+    /// set: while closed, keys go past the engine, but Shift (`on_keyup`).
+    pub(crate) fn set_keyboard_open(&self, open: bool) {
+        self.lang_mode.update(|mode| match (mode, open) {
+            (TsfLangMode::Chinese, false) => TsfLangMode::DisabledChinese,
+            (TsfLangMode::English, false) => TsfLangMode::DisabledEnglish,
+            (TsfLangMode::DisabledChinese, true) => TsfLangMode::Chinese,
+            (TsfLangMode::DisabledEnglish, true) => TsfLangMode::English,
+            (mode, _) => mode,
         });
     }
 
@@ -1096,8 +1100,9 @@ impl Engine {
         self.lang_mode.update(|v| match v {
             TsfLangMode::English => TsfLangMode::Chinese,
             TsfLangMode::Chinese => TsfLangMode::English,
-            TsfLangMode::DisabledEnglish => TsfLangMode::DisabledChinese,
-            TsfLangMode::DisabledChinese => TsfLangMode::DisabledEnglish,
+            // Opens a closed keyboard: switching to another IME and back is
+            // no way out when this is the only one.
+            TsfLangMode::DisabledEnglish | TsfLangMode::DisabledChinese => TsfLangMode::Chinese,
         });
         self.sync_lang_mode(ui)?;
 

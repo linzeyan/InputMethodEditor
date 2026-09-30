@@ -340,13 +340,11 @@ impl ChewingTextService {
 
     pub(super) fn on_compartment_change_ro(&self, guid: &GUID) -> Result<()> {
         debug!(has_focus=self.ui.has_focus; "on_compartment_change_ro");
-        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
-            && !self.ui.pending_lang_mode_change.take()
-            && self.ui.has_focus
+        // Not our own change from sync_keyboard_openclose: Ctrl+Space or the
+        // program, starting a sync_lang_mode cycle.
+        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE && !self.ui.pending_lang_mode_change.take()
         {
-            // Compartment change is caused by Ctrl+Space shortcut, starting
-            // a sync_lang_mode cycle.
-            self.engine.toggle_keyboard_openclose();
+            self.engine.set_keyboard_open(self.ui.keyboard_open()?);
             self.sync_lang_mode(false)?;
         }
         Ok(())
@@ -354,13 +352,11 @@ impl ChewingTextService {
 
     pub(super) fn on_compartment_change(&mut self, guid: &GUID) -> Result<()> {
         debug!(has_focus=self.ui.has_focus; "on_compartment_change");
-        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE
-            && !self.ui.pending_lang_mode_change.take()
-            && self.ui.has_focus
-        {
-            // Compartment change is caused by Ctrl+Space shortcut, starting
-            // a sync_lang_mode cycle.
-            self.engine.toggle_keyboard_openclose();
+        // Taken as it is, whenever it comes: flipping on each change, or
+        // skipping one while unfocused, left the keyboard closed for good
+        // once a change was missed or repeated.
+        if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE {
+            self.engine.set_keyboard_open(self.ui.keyboard_open()?);
             self.sync_lang_mode(false)?;
             if self.engine.is_composing(self.ui.has_composition())
                 && self.engine.lang_mode.get().is_disabled()
@@ -575,6 +571,15 @@ impl TsfUi {
         Ok(())
     }
 
+    fn keyboard_open(&self) -> Result<bool> {
+        let compartment_mgr: ITfCompartmentMgr = self.thread_mgr.cast()?;
+        unsafe {
+            let compartment =
+                compartment_mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE)?;
+            Ok(i32::try_from(&compartment.GetValue()?)? != 0)
+        }
+    }
+
     fn update_lang_buttons(&self, engine: &Engine) -> Result<()> {
         let icon = engine.lang_icon(&self.lang_icons);
         self.switch_lang_button.set_icon(icon)?;
@@ -689,16 +694,22 @@ impl<'a> ReentrantOps<'a> {
         if !force && !tip.ui.pending_lang_mode_change.get() {
             return Ok(());
         }
-        if !tip.engine.cfg.chewing_tsf.sync_lang_mode_openclose {
+        let sync = tip.engine.cfg.chewing_tsf.sync_lang_mode_openclose;
+        if !sync {
             // sync openclose is disabled by default
             tip.ui.pending_lang_mode_change.set(false);
-            return Ok(());
+            // Still, Shift opens a closed keyboard (Engine::on_keyup), which
+            // Ctrl+Space and the program should see.
+            if tip.engine.lang_mode.get().is_disabled() || tip.ui.keyboard_open()? {
+                return Ok(());
+            }
         }
         let compartment_mgr: ITfCompartmentMgr = tip.ui.thread_mgr.cast()?;
         unsafe {
             let compartment =
                 compartment_mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_OPENCLOSE)?;
             let openclose: i32 = match tip.engine.lang_mode.get() {
+                _ if !sync => 1,
                 TsfLangMode::Chinese => 1,
                 TsfLangMode::English => 0,
                 _ => 0,
