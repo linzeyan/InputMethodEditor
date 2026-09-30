@@ -14,14 +14,19 @@ use chewing_tip_core::PRODUCT_NAME;
 use chewing_tip_core::config::Config;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
 use windows::Win32::System::SystemInformation::GetTickCount;
-use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+use windows::Win32::System::Threading::{
+    AttachThreadInput, GetCurrentThreadId, GetExitCodeProcess, INFINITE, WaitForSingleObject,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowThreadProcessId, IDYES, MB_ICONERROR, MB_ICONINFORMATION,
     MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
+    SW_HIDE,
 };
-use windows::core::HSTRING;
+use windows::core::{HSTRING, PCWSTR, w};
 use windows_registry::CURRENT_USER;
 
 const LATEST_RELEASE: &str =
@@ -102,15 +107,49 @@ fn install(asset: &Asset, version: &str) -> Result<()> {
         let _ = fs::remove_file(&path);
         return Err("下載的檔案和 GitHub 上記載的不符".into());
     }
-    // A progress bar and no questions, but for Windows asking for
-    // administrator rights. No restart: running programs keep the old DLL
-    // until they reopen.
-    Command::new("msiexec.exe")
-        .arg("/i")
-        .arg(&path)
-        .args(["/passive", "/norestart"])
-        .spawn()?;
-    Ok(())
+    // Every running program has the DLL loaded, and /passive still stops at
+    // the files-in-use dialog for them. /qn takes its Ignore instead (programs
+    // started afterwards load the new DLL) but can't ask for administrator
+    // rights, so msiexec starts elevated and UAC is all that shows.
+    // No restart: the old DLLs go at the next one.
+    let parameters = format!("/i \"{}\" /qn /norestart", path.display());
+    let code = run_elevated("msiexec.exe", &parameters);
+    let _ = fs::remove_file(&path);
+    match code? {
+        // 3010: installed, with the old DLLs left for the restart.
+        None | Some(0 | 3010) => Ok(()),
+        Some(code) => Err(format!("安裝程式結束代碼 {code}").into()),
+    }
+}
+
+/// Runs `file` as administrator and waits for its exit code; None if the
+/// UAC prompt was declined.
+fn run_elevated(file: &str, parameters: &str) -> Result<Option<u32>> {
+    let file = HSTRING::from(file);
+    let parameters = HSTRING::from(parameters);
+    let mut info = SHELLEXECUTEINFOW {
+        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+        fMask: SEE_MASK_NOCLOSEPROCESS,
+        lpVerb: w!("runas"),
+        lpFile: PCWSTR(file.as_ptr()),
+        lpParameters: PCWSTR(parameters.as_ptr()),
+        nShow: SW_HIDE.0,
+        ..Default::default()
+    };
+    unsafe {
+        if let Err(error) = ShellExecuteExW(&mut info) {
+            if error.code() == ERROR_CANCELLED.to_hresult() {
+                return Ok(None);
+            }
+            return Err(error.into());
+        }
+        WaitForSingleObject(info.hProcess, INFINITE);
+        let mut code = 0;
+        let exited = GetExitCodeProcess(info.hProcess, &mut code);
+        let _ = CloseHandle(info.hProcess);
+        exited?;
+        Ok(Some(code))
+    }
 }
 
 /// Windows' own curl, whose TLS is the system's: certificates and all.
