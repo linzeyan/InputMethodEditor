@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use chewing::editor::zhuyin_layout::{self, KeyBehavior, KeyboardLayoutCompat, SyllableEditor};
 use chewing::editor::{
-    BasicEditor, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
+    BasicEditor, CharacterForm, ConversionEngineKind, Editor, EditorKeyBehavior, LanguageMode,
     UserPhraseAddDirection,
 };
 use chewing::input::keycode::Keycode;
@@ -181,6 +181,8 @@ pub(crate) struct Engine {
     /// The letters typed since the composition was empty, while nothing else
     /// has been; Space after a code types its phrase.
     typed: Option<String>,
+    /// Every character typed fullwidth, as Shift+Space switched it.
+    fullwidth: bool,
 }
 
 impl Engine {
@@ -207,6 +209,7 @@ impl Engine {
             space_undo: None,
             phrases: HashMap::new(),
             typed: None,
+            fullwidth: false,
         };
 
         if let Err(error) = engine.init_chewing_context(ui) {
@@ -307,6 +310,9 @@ impl Engine {
                 return Ok(false);
             }
         }
+        if self.is_fullwidth_toggle(&evt) {
+            return Ok(true);
+        }
         if self.cfg.chewing_tsf.enable_caps_lock
             && !self.cfg.chewing_tsf.lock_chinese_on_caps_lock
             && evt.ksym.is_unicode()
@@ -315,14 +321,18 @@ impl Engine {
             return Ok(true);
         }
         if !self.is_composing(ui.has_composition()) {
-            // don't do further handling in pure English mode
-            if self.lang_mode.get() == LanguageMode::English && !simulate_english_layout {
+            // don't do further handling in pure English mode, but chewing
+            // makes fullwidth letters and spaces
+            if self.lang_mode.get() == LanguageMode::English
+                && !simulate_english_layout
+                && !self.fullwidth
+            {
                 debug!("key not handled - in English mode");
                 return Ok(false);
             }
             // No need to handle VK_SPACE when not composing
             // This make the space key available for other shortcuts
-            if evt.ksym == SYM_SPACE && !evt.is_state_on(KeyState::Shift) {
+            if evt.ksym == SYM_SPACE && !evt.is_state_on(KeyState::Shift) && !self.fullwidth {
                 return Ok(false);
             }
             if !evt.ksym.is_unicode() {
@@ -345,6 +355,16 @@ impl Engine {
         }
         let mut evt = ev.to_keyboard_event(self.keymap);
         debug!(evt:?; "on_keydown");
+
+        if self.is_fullwidth_toggle(&evt) {
+            self.fullwidth = !self.fullwidth;
+            self.apply_character_form();
+            if self.cfg.chewing_tsf.show_fullwidth_notification {
+                let msg = if self.fullwidth { "全形" } else { "半形" };
+                self.show_message(ui, msg, Duration::from_millis(500))?;
+            }
+            return Ok(true);
+        }
 
         // Handle keybindings
         // FIXME: refactor this
@@ -726,6 +746,27 @@ impl Engine {
         // key repeat might not stop. So we always return `false` and handle keyup in
         // `on_test_keyup`.
         Ok(false)
+    }
+
+    /// Shift+Space, when it switches between halfwidth and fullwidth.
+    fn is_fullwidth_toggle(&self, evt: &KeyboardEvent) -> bool {
+        self.cfg.chewing_tsf.enable_fullwidth_toggle
+            && evt.ksym == SYM_SPACE
+            && evt.is_state_on(KeyState::Shift)
+            && !evt.is_state_on(KeyState::Control)
+    }
+
+    /// Fullwidth is for every character, and only while Shift+Space may
+    /// switch it back.
+    fn apply_character_form(&mut self) {
+        self.fullwidth &= self.cfg.chewing_tsf.enable_fullwidth_toggle;
+        let form = if self.fullwidth {
+            CharacterForm::Fullwidth
+        } else {
+            CharacterForm::Halfwidth
+        };
+        self.chewing_editor
+            .set_editor_options(|opt| opt.character_form = form);
     }
 
     /// Follows the keyboard's open/close state, which Ctrl+Space and programs
@@ -1175,9 +1216,9 @@ impl Engine {
             opt.esc_clear_all_buffer = cfg.esc_clean_all_buf;
             opt.space_is_select_key = cfg.show_cand_with_space_key;
             opt.disable_auto_learn_phrase = !cfg.enable_auto_learn;
-            // Chinese mode types fullwidth punctuation and English mode
-            // halfwidth; there is no switching between them. Chewing's
-            // default would take Shift+Space for it.
+            // on_keydown switches it (apply_character_form): chewing's key
+            // works only between syllables, and the form would go with the
+            // editor, rebuilt on every focus.
             opt.enable_fullwidth_toggle_key = false;
             opt.sort_candidates_by_frequency = cfg.sort_candidates_by_frequency;
             // Set here, not once at init: every config change and focus
@@ -1211,6 +1252,7 @@ impl Engine {
     /// Applys config changes that should be effective at runtime
     pub(crate) fn apply_runtime_config(&mut self, ui: &impl Frontend) -> Result<()> {
         self.chewing_editor = Self::build_editor_from_cfg(&self.cfg.chewing_tsf)?;
+        self.apply_character_form();
         self.phrases = load_phrases();
         self.apply_input_method();
         let _ = ui.update_lang_buttons(self);

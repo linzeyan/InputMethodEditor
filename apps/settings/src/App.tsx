@@ -506,6 +506,33 @@ const InputBehaviors = ({
         </div>
       </Tooltip>
       <Tooltip
+        content="按 Shift＋空白鍵在半形與全形之間切換，一開始是半形。全形時英文字母、數字、符號和空白都打成全形，例如 ＡＢＣ１２３，中文、英文模式都是。不勾選時不能切換，只有中文模式的標點是全形（，。？）。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="使用 Shift + 空白鍵切換全形／半形"
+            name="enable_fullwidth_toggle"
+            checked={config?.enable_fullwidth_toggle}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="按 Shift＋空白鍵切換時，短暫顯示「全形」或「半形」。需先勾選「使用 Shift + 空白鍵切換全形／半形」。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="顯示全形／半形切換通知訊息"
+            name="show_fullwidth_notification"
+            disabled={!config?.enable_fullwidth_toggle}
+            checked={config?.show_fullwidth_notification}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
         content="中文模式下 Shift＋字母打出英文字母：勾選是大寫（A），不勾選是小寫（a）。勾選「按住 Shift 輸入快捷符號」時 Shift＋字母打的是快捷符號，這項停用。"
         relationship="description"
       >

@@ -56,6 +56,10 @@ pub struct ChewingTsfConfig {
     pub enable_auto_learn: bool,
     pub esc_clean_all_buf: bool,
     pub full_shape_symbols: bool,
+    /// Shift+Space switches between halfwidth and fullwidth for every
+    /// character; without it only Chinese punctuation is fullwidth.
+    pub enable_fullwidth_toggle: bool,
+    pub show_fullwidth_notification: bool,
     pub upper_case_with_shift: bool,
     pub add_phrase_forward: bool,
     pub phrase_choice_rearward: bool,
@@ -117,6 +121,8 @@ impl Default for ChewingTsfConfig {
             enable_auto_learn: true,
             esc_clean_all_buf: false,
             full_shape_symbols: true,
+            enable_fullwidth_toggle: false,
+            show_fullwidth_notification: true,
             upper_case_with_shift: false,
             add_phrase_forward: true,
             phrase_choice_rearward: false,
@@ -314,6 +320,12 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "FullShapeSymbols") {
                 cfg.full_shape_symbols = value;
             }
+            if let Ok(value) = reg_get_bool(&key, "EnableFullwidthToggle") {
+                cfg.enable_fullwidth_toggle = value;
+            }
+            if let Ok(value) = reg_get_bool(&key, "ShowFullwidthNotification") {
+                cfg.show_fullwidth_notification = value;
+            }
             if let Ok(value) = reg_get_bool(&key, "EscCleanAllBuf") {
                 cfg.esc_clean_all_buf = value;
             }
@@ -464,6 +476,16 @@ impl Config {
             chewing_tsf.lock_chinese_on_caps_lock,
         );
         let _ = reg_set_bool(&key, "FullShapeSymbols", chewing_tsf.full_shape_symbols);
+        let _ = reg_set_bool(
+            &key,
+            "EnableFullwidthToggle",
+            chewing_tsf.enable_fullwidth_toggle,
+        );
+        let _ = reg_set_bool(
+            &key,
+            "ShowFullwidthNotification",
+            chewing_tsf.show_fullwidth_notification,
+        );
         let _ = reg_set_bool(&key, "EscCleanAllBuf", chewing_tsf.esc_clean_all_buf);
         let _ = reg_set_bool(
             &key,
