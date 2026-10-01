@@ -44,6 +44,10 @@ use log::{debug, error, info};
 use scoped_error::{ErrorExt, expect_error};
 use windows::Win32::Foundation::{HMODULE, HWND, RECT};
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP,
+    SendInput, VK_CAPITAL,
+};
 use windows::Win32::UI::TextServices::ITfThreadMgr;
 use windows::Win32::UI::WindowsAndMessaging::{
     CheckMenuItem, HICON, HMENU, MF_CHECKED, MF_UNCHECKED,
@@ -183,6 +187,8 @@ pub(crate) struct Engine {
     typed: Option<String>,
     /// Every character typed fullwidth, as Shift+Space switched it.
     fullwidth: bool,
+    /// When `apply_app_mode` last pressed CapsLock.
+    caps_lock_pressed: Cell<Option<Instant>>,
 }
 
 impl Engine {
@@ -210,6 +216,7 @@ impl Engine {
             phrases: HashMap::new(),
             typed: None,
             fullwidth: false,
+            caps_lock_pressed: Cell::new(None),
         };
 
         if let Err(error) = engine.init_chewing_context(ui) {
@@ -256,6 +263,15 @@ impl Engine {
         //
         if let Err(error) = self.apply_config_if_changed(ui) {
             error!("unable to load config: {error:#}");
+        }
+        // The CapsLock apply_app_mode pressed may have come while no document
+        // was there for on_keyup to see it.
+        if self.cfg.chewing_tsf.enable_caps_lock {
+            let mode = self.lang_mode.get();
+            self.sync_caps_lock();
+            if mode != self.lang_mode.get() {
+                self.sync_lang_mode(ui)?;
+            }
         }
         //
         // Step 2. handle any mode change related keydown
@@ -769,6 +785,47 @@ impl Engine {
             .set_editor_options(|opt| opt.character_form = form);
     }
 
+    /// Puts the language mode where the settings want it for this program, as
+    /// it opens or comes to the front.
+    pub(crate) fn apply_app_mode(&self) {
+        let cfg = &self.cfg.chewing_tsf;
+        let Some(english) = app_name().and_then(|name| app_mode(cfg, &name)) else {
+            return;
+        };
+        // A closed keyboard stays closed, and CapsLock would only change the
+        // case of what goes past it.
+        if self.lang_mode.get().is_disabled() {
+            return;
+        }
+        if !cfg.enable_caps_lock {
+            self.lang_mode.set(if english {
+                TsfLangMode::English
+            } else {
+                TsfLangMode::Chinese
+            });
+            return;
+        }
+        // CapsLock decides the mode, so CapsLock is what changes: pressed
+        // here, followed in on_keyup. Only by the program in front, and once:
+        // until this thread takes the press from its queue, CapsLock reads as
+        // before, and pressing again would undo it.
+        // ponytail: a second stands for "taken"; a hung thread may get two.
+        let on = SystemKeyboardEvent::default()
+            .to_keyboard_event(self.keymap)
+            .is_state_on(KeyState::CapsLock);
+        let pressing = self
+            .caps_lock_pressed
+            .get()
+            .is_some_and(|at| at.elapsed() < Duration::from_secs(1));
+        if on != (english != cfg.lock_chinese_on_caps_lock)
+            && !pressing
+            && !unsafe { GetFocus() }.is_invalid()
+        {
+            press_caps_lock();
+            self.caps_lock_pressed.set(Some(Instant::now()));
+        }
+    }
+
     /// Follows the keyboard's open/close state, which Ctrl+Space and programs
     /// set: while closed, keys go past the engine, but Shift (`on_keyup`).
     pub(crate) fn set_keyboard_open(&self, open: bool) {
@@ -1195,6 +1252,7 @@ impl Engine {
 
     fn init_chewing_context(&mut self, ui: &mut impl Frontend) -> Result<()> {
         self.apply_init_config(ui)?;
+        self.apply_app_mode();
         self.sync_lang_mode(ui)?;
         Ok(())
     }
@@ -1360,6 +1418,39 @@ fn app_name() -> Option<String> {
 fn remembered_english() -> Option<bool> {
     let key = CURRENT_USER.open(app_modes_key()).ok()?;
     Some(key.get_u32(app_name()?).ok()? != 0)
+}
+
+/// What the settings switch the program `name` to: `Some(true)` for English.
+/// They list it as typed: in any case, with or without .exe.
+fn app_mode(cfg: &ChewingTsfConfig, name: &str) -> Option<bool> {
+    let listed = |apps: &str| {
+        apps.lines()
+            .map(|app| app.trim().to_lowercase())
+            .any(|app| !app.is_empty() && (app == name || format!("{app}.exe") == name))
+    };
+    if listed(&cfg.english_apps) {
+        Some(true)
+    } else if listed(&cfg.chinese_apps) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Presses and releases CapsLock, as the user would.
+fn press_caps_lock() {
+    let key = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: VK_CAPITAL,
+                dwFlags: flags,
+                ..Default::default()
+            },
+        },
+    };
+    let keys = [key(KEYBD_EVENT_FLAGS(0)), key(KEYEVENTF_KEYUP)];
+    unsafe { SendInput(&keys, size_of::<INPUT>() as i32) };
 }
 
 fn remember_english(english: bool) {
@@ -1613,7 +1704,22 @@ mod tests {
     use chewing::zhuyin::Bopomofo as bpmf;
     use chewing_tip_core::config::ChewingTsfConfig;
 
-    use super::{change_tone, convert_output, convert_preedit, dedup_candidates, retone};
+    use super::{app_mode, change_tone, convert_output, convert_preedit, dedup_candidates, retone};
+
+    #[test]
+    fn programs_are_listed_by_executable_name_as_typed() {
+        let cfg = ChewingTsfConfig {
+            english_apps: "Chrome\r\n  code.exe \n".to_owned(),
+            chinese_apps: "Telegram.exe\n\n".to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(app_mode(&cfg, "chrome.exe"), Some(true));
+        assert_eq!(app_mode(&cfg, "code.exe"), Some(true));
+        assert_eq!(app_mode(&cfg, "telegram.exe"), Some(false));
+        // Neither a part of a name nor an empty line lists a program.
+        assert_eq!(app_mode(&cfg, "chromium.exe"), None);
+        assert_eq!(app_mode(&cfg, ".exe"), None);
+    }
 
     fn simplified(vocabulary: bool) -> ChewingTsfConfig {
         ChewingTsfConfig {

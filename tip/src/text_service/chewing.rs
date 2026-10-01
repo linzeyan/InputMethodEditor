@@ -239,6 +239,7 @@ impl ChewingTextService {
             context: None,
         };
         self.engine.apply_runtime_config(&ui)?;
+        self.engine.apply_app_mode();
         self.sync_lang_mode(true)?;
         Ok(())
     }

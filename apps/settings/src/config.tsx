@@ -23,6 +23,8 @@ export type ChewingTsfConfig = {
   show_cand_with_space_key: boolean;
   advance_after_selection: boolean;
   default_english: boolean;
+  english_apps: string;
+  chinese_apps: string;
   output_simp_chinese: boolean;
   output_simp_vocabulary: boolean;
   pinyin: boolean;

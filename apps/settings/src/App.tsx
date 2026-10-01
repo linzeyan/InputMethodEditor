@@ -338,6 +338,7 @@ function App() {
         onTabSelect={onTabSelect}
       >
         <Tab value="1">打字行為</Tab>
+        <Tab value="apps">各程式</Tab>
         <Tab value="2">界面外觀</Tab>
         <Tab value="3">鍵盤設定</Tab>
         <Tab value="pinyin">拼音</Tab>
@@ -356,6 +357,9 @@ function App() {
           setConfig={setConfig}
           setBooleanConfig={setBooleanConfig}
         />
+      )}
+      {selectedTab === "apps" && config && (
+        <Apps config={config} styles={styles} setConfig={setConfig} />
       )}
       {selectedTab === "2" && config && (
         <Appearance
@@ -666,7 +670,7 @@ const InputBehaviors = ({
         </div>
       </Tooltip>
       <Tooltip
-        content="每個程式會記住上次切到的中文或英文，下次開啟時沿用；這項決定還沒切換過的程式從哪個模式開始。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
+        content="每個程式會記住上次切到的中文或英文，下次開啟時沿用；這項決定還沒切換過的程式從哪個模式開始。「各程式」頁列出的程式照那裡的設定。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
         relationship="description"
       >
         <div className={styles.hint}>
@@ -1342,6 +1346,31 @@ const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => (
         />
       </Field>
     </Tooltip>
+  </div>
+);
+
+const Apps = ({ config, styles, setConfig }) => (
+  <div role="tabpanel" aria-labelledby="Apps" style={{ margin: "16px" }}>
+    <div style={{ display: "flex", gap: "16px" }}>
+      {[
+        ["english_apps", "開啟或切換到這些程式時用英數："],
+        ["chinese_apps", "開啟或切換到這些程式時用中文："],
+      ].map(([name, label]) => (
+        <Field key={name} label={label} style={{ flex: 1 }}>
+          <Textarea
+            value={config[name]}
+            style={{ height: "50vh" }}
+            textarea={{ className: styles.texarea_inner }}
+            onChange={(_ev, data) => setConfig({ ...config, [name]: data.value })}
+          />
+        </Field>
+      ))}
+    </div>
+    <Text>
+      每行一個程式的執行檔名稱，例如 chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到；大小寫不拘，.exe
+      可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依
+      CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock 讓燈號對上。
+    </Text>
   </div>
 );
 

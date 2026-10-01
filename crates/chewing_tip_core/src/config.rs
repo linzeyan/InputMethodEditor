@@ -70,6 +70,10 @@ pub struct ChewingTsfConfig {
     pub show_cand_with_space_key: bool,
     pub advance_after_selection: bool,
     pub default_english: bool,
+    /// Executable names, one a line, of the programs that switch to English
+    /// or Chinese whenever they open or come to the front.
+    pub english_apps: String,
+    pub chinese_apps: String,
     pub output_simp_chinese: bool,
     /// Simplified output also swaps Taiwanese terms for mainland ones (軟體→软件)
     /// instead of converting the script only (軟體→软体).
@@ -133,6 +137,8 @@ impl Default for ChewingTsfConfig {
             show_cand_with_space_key: false,
             advance_after_selection: true,
             default_english: false,
+            english_apps: String::new(),
+            chinese_apps: String::new(),
             output_simp_chinese: false,
             output_simp_vocabulary: false,
             pinyin: false,
@@ -223,6 +229,12 @@ impl Config {
             }
             if let Ok(value) = reg_get_bool(&key, "DefaultEnglish") {
                 cfg.default_english = value;
+            }
+            if let Ok(value) = key.get_string("EnglishApps") {
+                cfg.english_apps = value;
+            }
+            if let Ok(value) = key.get_string("ChineseApps") {
+                cfg.chinese_apps = value;
             }
             if let Ok(value) = reg_get_bool(&key, "ShowCandWithSpaceKey") {
                 cfg.show_cand_with_space_key = value;
@@ -404,6 +416,8 @@ impl Config {
         );
         let _ = reg_set_i32(&key, "CandPerRow", chewing_tsf.cand_per_row);
         let _ = reg_set_bool(&key, "DefaultEnglish", chewing_tsf.default_english);
+        let _ = key.set_string("EnglishApps", &chewing_tsf.english_apps);
+        let _ = key.set_string("ChineseApps", &chewing_tsf.chinese_apps);
         let _ = reg_set_bool(
             &key,
             "ShowCandWithSpaceKey",
