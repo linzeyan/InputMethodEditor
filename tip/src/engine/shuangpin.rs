@@ -194,7 +194,7 @@ impl SyllableEditor for Shuangpin {
 pub(super) fn takes(scheme: Scheme, key: &KeyboardEvent) -> bool {
     matches!(key.ksym, SYM_BACKSPACE | SYM_ESC | SYM_CAPSLOCK)
         || !key.has_modifiers() && {
-            let key = key.ksym.to_unicode();
+            let key = key.ksym.to_unicode().to_ascii_lowercase();
             key == ' ' || !scheme.finals(key).is_empty()
         }
 }

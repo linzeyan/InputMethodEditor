@@ -159,7 +159,12 @@ pub(super) fn takes(key: &KeyboardEvent) -> bool {
     // Chewing handles these itself: the syllable loses a letter or goes away.
     matches!(key.ksym, SYM_BACKSPACE | SYM_ESC | SYM_CAPSLOCK)
         || !key.has_modifiers()
-            && matches!(key.ksym.to_unicode(), 'a'..='z' | ' ' | '\'' | '1'..='5')
+            // Capitals while CapsLock locks Chinese, made small only after
+            // this: taken for other keys, they cut wo into 我喔.
+            && matches!(
+                key.ksym.to_unicode().to_ascii_lowercase(),
+                'a'..='z' | ' ' | '\'' | '1'..='5'
+            )
 }
 
 /// The key that ends the syllable being typed. Pinyin reads the symbol, most
@@ -332,6 +337,15 @@ mod tests {
         assert_eq!(syllables("xian"), ["ㄒㄧㄢ"]);
         assert_eq!(syllables("xi'an"), ["ㄒㄧ", "ㄢ"]);
         assert_eq!(syllables("ma3"), ["ㄇㄚˇ"]);
+    }
+
+    #[test]
+    fn capitals_from_caps_lock_go_on_the_syllable() {
+        let key = KeyboardEvent::builder()
+            .ksym(Keysym::from('O'))
+            .caps_lock_if(true)
+            .build();
+        assert!(super::takes(&key));
     }
 
     #[test]
