@@ -1287,6 +1287,20 @@ const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => (
       </div>
     </Tooltip>
     <Tooltip
+      content="每次登入 Windows（包括開機後登入）約 5 分鐘時查看一次，不管距離上次多久；同一次登入之後仍照下面的間隔。"
+      relationship="description"
+    >
+      <div className={styles.hint}>
+        <Checkbox
+          label="登入時也檢查一次"
+          name="check_update_at_logon"
+          disabled={!config.check_update}
+          checked={config.check_update_at_logon}
+          onChange={setBooleanConfig}
+        />
+      </div>
+    </Tooltip>
+    <Tooltip
       content="距離上次查看要滿這麼多天才會再查，1 到 30 天。"
       relationship="description"
     >

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 //! `--check-update`, which a scheduled task runs at logon and daily: once
-//! every `update_check_days` it looks up the latest GitHub release and offers
+//! every `update_check_days`, and once after each logon if
+//! `check_update_at_logon`, it looks up the latest GitHub release and offers
 //! to install it if it is newer.
 
 use std::error::Error;
@@ -15,6 +16,10 @@ use chewing_tip_core::config::Config;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
+use windows::Win32::System::RemoteDesktop::{
+    WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSFreeMemory, WTSINFOW,
+    WTSQuerySessionInformationW, WTSSessionInfo,
+};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, GetExitCodeProcess, INFINITE, WaitForSingleObject,
@@ -26,7 +31,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
     SW_HIDE,
 };
-use windows::core::{HSTRING, PCWSTR, w};
+use windows::core::{HSTRING, PCWSTR, PWSTR, w};
 use windows_registry::CURRENT_USER;
 
 const LATEST_RELEASE: &str =
@@ -61,7 +66,8 @@ fn check() -> Result<()> {
     let last = key.get_u64("LastUpdateCheck").unwrap_or(0);
     let config = Config::from_reg().unwrap_or_default().chewing_tsf;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-    if !config.check_update || !due(last, now, config.update_check_days) {
+    let logon = config.check_update_at_logon.then(logon_time).flatten();
+    if !config.check_update || !due(last, now, config.update_check_days, logon) {
         return Ok(());
     }
     let release: Release = serde_json::from_slice(&curl(&[LATEST_RELEASE])?)?;
@@ -87,8 +93,32 @@ fn check() -> Result<()> {
     Ok(())
 }
 
-fn due(last: u64, now: u64, days: i32) -> bool {
-    now.saturating_sub(last) >= days.clamp(1, 30) as u64 * 24 * 60 * 60
+/// Whether to look again: `days` have passed, or nothing has looked since
+/// the `logon` given.
+fn due(last: u64, now: u64, days: i32, logon: Option<u64>) -> bool {
+    logon.is_some_and(|logon| last < logon)
+        || now.saturating_sub(last) >= days.clamp(1, 30) as u64 * 24 * 60 * 60
+}
+
+/// When this session was logged on to, in Unix seconds. Not the boot: with
+/// fast startup, Windows starts from hibernation but the user logs on anew.
+fn logon_time() -> Option<u64> {
+    unsafe {
+        let mut info = PWSTR::null();
+        let mut size = 0;
+        WTSQuerySessionInformationW(
+            Some(WTS_CURRENT_SERVER_HANDLE),
+            WTS_CURRENT_SESSION,
+            WTSSessionInfo,
+            &mut info,
+            &mut size,
+        )
+        .ok()?;
+        let logon = (*(info.0 as *const WTSINFOW)).LogonTime;
+        WTSFreeMemory(info.0.cast());
+        // A FILETIME: 100 ns since 1601.
+        (logon as u64 / 10_000_000).checked_sub(11_644_473_600)
+    }
 }
 
 /// Compares dotted numbers; anything else is never newer.
@@ -230,12 +260,22 @@ mod tests {
     #[test]
     fn due_after_the_interval_kept_to_one_to_thirty_days() {
         let day = 24 * 60 * 60;
-        assert!(due(0, 100 * day, 7));
-        assert!(!due(10 * day, 16 * day, 7));
-        assert!(due(10 * day, 17 * day, 7));
+        assert!(due(0, 100 * day, 7, None));
+        assert!(!due(10 * day, 16 * day, 7, None));
+        assert!(due(10 * day, 17 * day, 7, None));
         // Out of range, as a hand-edited registry might have it.
-        assert!(due(10 * day, 11 * day, 0));
-        assert!(!due(10 * day, 39 * day, 365));
-        assert!(due(10 * day, 40 * day, 365));
+        assert!(due(10 * day, 11 * day, 0, None));
+        assert!(!due(10 * day, 39 * day, 365, None));
+        assert!(due(10 * day, 40 * day, 365, None));
+    }
+
+    #[test]
+    fn due_once_after_each_logon() {
+        let day = 24 * 60 * 60;
+        let logon = Some(12 * day);
+        // The logon run looks though the interval isn't up; the noon run of
+        // the same session doesn't again.
+        assert!(due(10 * day, 12 * day + 300, 7, logon));
+        assert!(!due(12 * day + 300, 12 * day + 3600, 7, logon));
     }
 }

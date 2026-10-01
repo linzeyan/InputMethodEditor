@@ -101,6 +101,8 @@ pub struct ChewingTsfConfig {
     pub check_update: bool,
     /// Days between the settings app's checks for a new release, 1 to 30.
     pub update_check_days: i32,
+    /// Also looks once after each logon, however long since the last time.
+    pub check_update_at_logon: bool,
     pub modified_timestamp: u64,
 }
 
@@ -167,6 +169,7 @@ impl Default for ChewingTsfConfig {
             ],
             check_update: true,
             update_check_days: 7,
+            check_update_at_logon: true,
             modified_timestamp: 0,
         }
     }
@@ -329,6 +332,9 @@ impl Config {
             if let Ok(value) = reg_get_i32(&key, "UpdateCheckDays") {
                 cfg.update_check_days = value;
             }
+            if let Ok(value) = reg_get_bool(&key, "CheckUpdateAtLogon") {
+                cfg.check_update_at_logon = value;
+            }
             if let Ok(value) = key.get_u64("ModifiedTimestamp") {
                 cfg.modified_timestamp = value;
             }
@@ -477,6 +483,11 @@ impl Config {
         let _ = reg_set_bool(&key, "EnableAutoLearn", chewing_tsf.enable_auto_learn);
         let _ = reg_set_bool(&key, "CheckUpdate", chewing_tsf.check_update);
         let _ = reg_set_i32(&key, "UpdateCheckDays", chewing_tsf.update_check_days);
+        let _ = reg_set_bool(
+            &key,
+            "CheckUpdateAtLogon",
+            chewing_tsf.check_update_at_logon,
+        );
         let _ = key.set_multi_string(
             "Keybind".to_string(),
             chewing_tsf
