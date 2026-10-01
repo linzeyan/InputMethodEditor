@@ -11,7 +11,6 @@ pub(crate) mod shuangpin;
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::ffi::{OsString, c_void};
-use std::{env, fs};
 use std::io::ErrorKind;
 use std::mem;
 use std::os::windows::ffi::OsStringExt;
@@ -19,6 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Once;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
+use std::{env, fs};
 
 use anyhow::{Context, Result, bail};
 use chewing::editor::zhuyin_layout::{self, KeyBehavior, KeyboardLayoutCompat, SyllableEditor};
@@ -37,9 +37,9 @@ use chewing::input::keysym::{
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::{PRODUCT_NAME, SETTINGS_SCHEME};
 use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
+use chewing_tip_core::{PRODUCT_NAME, SETTINGS_SCHEME};
 use log::{debug, error, info};
 use scoped_error::{ErrorExt, expect_error};
 use windows::Win32::Foundation::{HMODULE, HWND, RECT};
@@ -1412,7 +1412,13 @@ fn app_modes_key() -> String {
 }
 
 fn app_name() -> Option<String> {
-    Some(env::current_exe().ok()?.file_name()?.to_str()?.to_lowercase())
+    Some(
+        env::current_exe()
+            .ok()?
+            .file_name()?
+            .to_str()?
+            .to_lowercase(),
+    )
 }
 
 fn remembered_english() -> Option<bool> {
