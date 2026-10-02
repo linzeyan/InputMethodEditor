@@ -2,12 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import {
-  Button,
-  makeStyles,
-  Body1,
-  Caption1,
-} from "@fluentui/react-components";
+import { Button, makeStyles, Body1 } from "@fluentui/react-components";
 import React, { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
@@ -71,10 +66,7 @@ function About() {
       <div className={styles.row}>
         <div className={styles.column}>
           <figure className={styles.logo}>
-            <img src="logo.png" alt="windows-chewing-tsf logo" />
-            <figcaption>
-              <Caption1>題字：翁政銓</Caption1>
-            </figcaption>
+            <img src="logo.svg" alt="InputMethodEditor logo" />
           </figure>
         </div>
         <div className={styles.column}>
