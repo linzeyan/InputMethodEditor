@@ -34,7 +34,7 @@ import React, { ChangeEvent, useEffect } from "react";
 import { ChewingTsfConfig, Config, KeybindValue } from "./config";
 import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
-import { message, open, save } from "@tauri-apps/plugin-dialog";
+import { ask, message, open, save } from "@tauri-apps/plugin-dialog";
 import KeybindingTab from "./KeybindingTab";
 import { ProgramPicker, appKey } from "./ProgramPicker";
 
@@ -1303,52 +1303,99 @@ const Pinyin = ({ config, styles, setConfig }) => {
   );
 };
 
-const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => (
-  <div role="tabpanel" aria-labelledby="Update" style={{ margin: "16px" }}>
-    <Tooltip
-      content="登入後和每天中午，看 GitHub 上有沒有新版本；有新版本時會跳出詢問，同意才下載安裝。取消勾選就不再連到 GitHub，要更新時自己下載新版的安裝檔。"
-      relationship="description"
-    >
-      <div className={styles.hint}>
-        <Checkbox
-          label="自動檢查更新"
-          name="check_update"
-          checked={config.check_update}
-          onChange={setBooleanConfig}
-        />
+const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => {
+  const [status, setStatus] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const checkNow = async () => {
+    setBusy(true);
+    setStatus("正在檢查…");
+    try {
+      const [latest, current] = await Promise.all([
+        invoke<string | null>("find_update"),
+        invoke<string>("app_version"),
+      ]);
+      if (!latest) {
+        setStatus(`已是最新版本（${current}）。`);
+        return;
+      }
+      const question = `InputMethodEditor ${latest} 已經推出，目前使用的是 ${current}。\n\n要下載並安裝嗎？`;
+      if (!(await ask(question, { title: "InputMethodEditor" }))) {
+        setStatus(`有新版本 ${latest}，尚未安裝。`);
+        return;
+      }
+      setStatus("正在下載並安裝…");
+      const installed = await invoke<boolean>("install_update");
+      setStatus(
+        installed
+          ? `已更新到 ${latest}，之後開啟的程式會用新版。`
+          : `有新版本 ${latest}，尚未安裝。`,
+      );
+    } catch (e) {
+      setStatus(`無法更新：${e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div role="tabpanel" aria-labelledby="Update" style={{ margin: "16px" }}>
+      <Tooltip
+        content="登入後和每天中午，看 GitHub 上有沒有新版本；有新版本時會跳出詢問，同意才下載安裝。取消勾選就不再連到 GitHub，要更新時自己下載新版的安裝檔。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="自動檢查更新"
+            name="check_update"
+            checked={config.check_update}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="每次登入 Windows（包括開機後登入）約 5 分鐘時查看一次，不管距離上次多久；同一次登入之後仍照下面的間隔。"
+        relationship="description"
+      >
+        <div className={styles.hint}>
+          <Checkbox
+            label="登入時也檢查一次"
+            name="check_update_at_logon"
+            disabled={!config.check_update}
+            checked={config.check_update_at_logon}
+            onChange={setBooleanConfig}
+          />
+        </div>
+      </Tooltip>
+      <Tooltip
+        content="距離上次查看要滿這麼多天才會再查，1 到 30 天。"
+        relationship="description"
+      >
+        <Field label="每隔幾天檢查一次新版本：" style={{ width: "50%" }}>
+          <SpinButton
+            value={config.update_check_days}
+            min={1}
+            max={30}
+            step={1}
+            disabled={!config.check_update}
+            onChange={setNumberConfig("update_check_days", 7)}
+          />
+        </Field>
+      </Tooltip>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "12px",
+          marginTop: "24px",
+        }}
+      >
+        <Button disabled={busy} onClick={checkNow}>
+          立即檢查更新
+        </Button>
+        <Text>{status}</Text>
       </div>
-    </Tooltip>
-    <Tooltip
-      content="每次登入 Windows（包括開機後登入）約 5 分鐘時查看一次，不管距離上次多久；同一次登入之後仍照下面的間隔。"
-      relationship="description"
-    >
-      <div className={styles.hint}>
-        <Checkbox
-          label="登入時也檢查一次"
-          name="check_update_at_logon"
-          disabled={!config.check_update}
-          checked={config.check_update_at_logon}
-          onChange={setBooleanConfig}
-        />
-      </div>
-    </Tooltip>
-    <Tooltip
-      content="距離上次查看要滿這麼多天才會再查，1 到 30 天。"
-      relationship="description"
-    >
-      <Field label="每隔幾天檢查一次新版本：" style={{ width: "50%" }}>
-        <SpinButton
-          value={config.update_check_days}
-          min={1}
-          max={30}
-          step={1}
-          disabled={!config.check_update}
-          onChange={setNumberConfig("update_check_days", 7)}
-        />
-      </Field>
-    </Tooltip>
-  </div>
-);
+    </div>
+  );
+};
 
 const APP_LISTS = {
   english_apps: { label: "開啟或切換到這些程式時用英數：", mode: "英數" },

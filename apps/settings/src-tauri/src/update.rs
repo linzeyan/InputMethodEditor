@@ -70,27 +70,61 @@ fn check() -> Result<()> {
     if !config.check_update || !due(last, now, config.update_check_days, logon) {
         return Ok(());
     }
-    let release: Release = serde_json::from_slice(&curl(&[LATEST_RELEASE])?)?;
+    let found = find()?;
     key.set_u64("LastUpdateCheck", now)?;
 
-    let current = env!("CARGO_PKG_VERSION");
-    let latest = release.tag_name.trim_start_matches('v');
-    if !newer(latest, current) {
-        return Ok(());
-    }
-    let Some(asset) = release.assets.iter().find(|asset| asset.name == MSI) else {
+    let Some((latest, asset)) = found else {
         return Ok(());
     };
+    let current = env!("CARGO_PKG_VERSION");
     let question = format!(
         "InputMethodEditor {latest} 已經推出，目前使用的是 {current}。\n\n要下載並安裝嗎？"
     );
     if show(&question, MB_YESNO | MB_ICONINFORMATION) != IDYES {
         return Ok(());
     }
-    if let Err(error) = install(asset, latest) {
+    if let Err(error) = install(&asset, &latest) {
         show(&format!("無法更新：{error}"), MB_ICONERROR);
     }
     Ok(())
+}
+
+/// 立即檢查更新 in the settings: the newer version, if any. Asked to, it
+/// looks even with automatic checks off.
+#[tauri::command]
+pub async fn find_update() -> std::result::Result<Option<String>, String> {
+    blocking(|| Ok(find()?.map(|(version, _)| version))).await
+}
+
+/// Installs the newer version, as the scheduled check does; false if the
+/// UAC prompt was declined.
+#[tauri::command]
+pub async fn install_update() -> std::result::Result<bool, String> {
+    blocking(|| match find()? {
+        Some((version, asset)) => install(&asset, &version),
+        None => Err("找不到新版本".into()),
+    })
+    .await
+}
+
+/// Off the async runtime: the download can take minutes.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> std::result::Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || work().map_err(|error| error.to_string()))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+/// The latest release's version and package, if it is newer than this one.
+fn find() -> Result<Option<(String, Asset)>> {
+    let release: Release = serde_json::from_slice(&curl(&[LATEST_RELEASE])?)?;
+    let latest = release.tag_name.trim_start_matches('v');
+    if !newer(latest, env!("CARGO_PKG_VERSION")) {
+        return Ok(None);
+    }
+    let asset = release.assets.into_iter().find(|asset| asset.name == MSI);
+    Ok(asset.map(|asset| (latest.to_owned(), asset)))
 }
 
 /// Whether to look again: `days` have passed, or nothing has looked since
@@ -129,7 +163,8 @@ fn newer(latest: &str, current: &str) -> bool {
     matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
 }
 
-fn install(asset: &Asset, version: &str) -> Result<()> {
+/// False if the UAC prompt was declined.
+fn install(asset: &Asset, version: &str) -> Result<bool> {
     let path = env::temp_dir().join(format!("InputMethodEditor-{version}.msi"));
     curl(&["-o", &path.to_string_lossy(), &asset.browser_download_url])?;
     let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&path)?));
@@ -146,8 +181,9 @@ fn install(asset: &Asset, version: &str) -> Result<()> {
     let code = run_elevated("msiexec.exe", &parameters);
     let _ = fs::remove_file(&path);
     match code? {
+        None => Ok(false),
         // 3010: installed, with the old DLLs left for the restart.
-        None | Some(0 | 3010) => Ok(()),
+        Some(0 | 3010) => Ok(true),
         Some(code) => Err(format!("安裝程式結束代碼 {code}").into()),
     }
 }

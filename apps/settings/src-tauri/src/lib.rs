@@ -109,6 +109,8 @@ pub fn run() {
             dictionary::validate,
             dictionary::map_bopomofo,
             programs::list_programs,
+            update::find_update,
+            update::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
