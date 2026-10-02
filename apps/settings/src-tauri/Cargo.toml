@@ -14,9 +14,12 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+# Both already locked through tauri-codegen; they turn icons into data URLs.
+base64 = "0.22"
 chewing.workspace = true
 chewing_tip_core = { path = "../../../crates/chewing_tip_core" }
 log.workspace = true
+png = "0.18"
 scoped-error.workspace = true
 serde.workspace = true
 serde_json = "1"
@@ -31,6 +34,10 @@ windows = {
   version = "0.61.0",
   features = [
     "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dwm",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Com",
     "Win32_System_RemoteDesktop",
     "Win32_System_SystemInformation",
     "Win32_System_Threading",

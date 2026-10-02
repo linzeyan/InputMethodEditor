@@ -1766,9 +1766,11 @@ name = "ime-settings"
 version = "0.4.3"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "chewing",
  "chewing_tip_core",
  "log",
+ "png 0.18.1",
  "scoped-error",
  "serde",
  "serde_json",

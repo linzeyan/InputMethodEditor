@@ -36,6 +36,7 @@ import { exit } from "@tauri-apps/plugin-process";
 import { listen } from "@tauri-apps/api/event";
 import { message, open, save } from "@tauri-apps/plugin-dialog";
 import KeybindingTab from "./KeybindingTab";
+import { ProgramPicker, appKey } from "./ProgramPicker";
 
 type FontFamilyName = {
   name: string;
@@ -1349,30 +1350,77 @@ const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => (
   </div>
 );
 
-const Apps = ({ config, styles, setConfig }) => (
-  <div role="tabpanel" aria-labelledby="Apps" style={{ margin: "16px" }}>
-    <div style={{ display: "flex", gap: "16px" }}>
-      {[
-        ["english_apps", "開啟或切換到這些程式時用英數："],
-        ["chinese_apps", "開啟或切換到這些程式時用中文："],
-      ].map(([name, label]) => (
-        <Field key={name} label={label} style={{ flex: 1 }}>
-          <Textarea
-            value={config[name]}
-            style={{ height: "50vh" }}
-            textarea={{ className: styles.texarea_inner }}
-            onChange={(_ev, data) => setConfig({ ...config, [name]: data.value })}
-          />
-        </Field>
-      ))}
+const APP_LISTS = {
+  english_apps: { label: "開啟或切換到這些程式時用英數：", mode: "英數" },
+  chinese_apps: { label: "開啟或切換到這些程式時用中文：", mode: "中文" },
+};
+
+const Apps = ({ config, styles, setConfig }) => {
+  const [picking, setPicking] = React.useState<string>();
+  const otherList = (name: string) =>
+    name === "english_apps" ? "chinese_apps" : "english_apps";
+  const keys = (name: string) =>
+    new Set<string>(config[name].split("\n").map(appKey));
+  // Appended to one list and dropped from the other, where the IME would
+  // otherwise still find it.
+  const add = (name: string, exes: string[]) => {
+    const other = otherList(name);
+    const added = new Set(exes.map(appKey));
+    const kept = config[name].trimEnd();
+    setConfig({
+      ...config,
+      [name]: (kept ? kept + "\n" : "") + exes.join("\n"),
+      [other]: config[other]
+        .split("\n")
+        .filter((line: string) => !added.has(appKey(line)))
+        .join("\n"),
+    });
+    setPicking(undefined);
+  };
+  return (
+    <div role="tabpanel" aria-labelledby="Apps" style={{ margin: "16px" }}>
+      <div style={{ display: "flex", gap: "16px" }}>
+        {Object.entries(APP_LISTS).map(([name, { label }]) => (
+          <div key={name} style={{ flex: 1 }}>
+            <Field label={label}>
+              <Textarea
+                value={config[name]}
+                style={{ height: "50vh" }}
+                textarea={{ className: styles.texarea_inner }}
+                onChange={(_ev, data) =>
+                  setConfig({ ...config, [name]: data.value })
+                }
+              />
+            </Field>
+            <Button
+              style={{ margin: "8px 0px" }}
+              onClick={() => setPicking(name)}
+            >
+              從程式清單加入…
+            </Button>
+          </div>
+        ))}
+      </div>
+      <Text>
+        每行一個程式的執行檔名稱，例如
+        chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到，或按「從程式清單加入」挑選；大小寫不拘，.exe
+        可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依
+        CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock
+        讓燈號對上。
+      </Text>
+      {picking && (
+        <ProgramPicker
+          title={`開啟或切換到時用${APP_LISTS[picking].mode}的程式`}
+          listed={keys(picking)}
+          other={keys(otherList(picking))}
+          otherLabel={`目前用${APP_LISTS[otherList(picking)].mode}`}
+          onAdd={(exes) => add(picking, exes)}
+          onClose={() => setPicking(undefined)}
+        />
+      )}
     </div>
-    <Text>
-      每行一個程式的執行檔名稱，例如 chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到；大小寫不拘，.exe
-      可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依
-      CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock 讓燈號對上。
-    </Text>
-  </div>
-);
+  );
+};
 
 const Symbols = ({ styles, symbols_dat, setSymbolsDat }) => (
   <div className={styles.content} role="tabpanel" aria-labelledby="Symbols">

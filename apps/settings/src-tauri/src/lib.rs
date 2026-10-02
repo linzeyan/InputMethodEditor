@@ -17,6 +17,7 @@ use tauri::menu::{MenuBuilder, SubmenuBuilder};
 mod config;
 mod dictionary;
 mod fonts;
+mod programs;
 mod update;
 mod version;
 
@@ -107,6 +108,7 @@ pub fn run() {
             dictionary::export_entries,
             dictionary::validate,
             dictionary::map_bopomofo,
+            programs::list_programs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
