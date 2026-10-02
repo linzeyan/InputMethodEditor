@@ -38,18 +38,20 @@ pub(crate) fn write_unihan_dict(dict_dir: &Path) -> Result<(), Error> {
             .collect();
         let mut csv = String::new();
         let mut count = 0;
+        let mut nasals = 0;
         for (ch, value) in fields(&readings, "kMandarin") {
-            // ponytail: BMP only. Beyond it fonts are patchy and characters
-            // rarer still (~14k more); drop the check if they're wanted.
-            if u32::from(ch) > 0xFFFF
-                || simplified.contains(&ch)
-                || words.get_wid(&ch.to_string()).is_some()
-            {
+            // Beyond the BMP too, though fonts there are patchy: an
+            // unrendered candidate still beats a character one can't type.
+            if simplified.contains(&ch) || words.get_wid(&ch.to_string()).is_some() {
                 continue;
             }
             // Of two readings, the first is the mainland's, the second Taiwan's.
             let pinyin = value.rsplit(' ').next().unwrap_or(value);
             let Some(zhuyin) = zhuyin(pinyin) else {
+                if syllabic_nasal(pinyin) {
+                    nasals += 1;
+                    continue;
+                }
                 Err(format!("no zhuyin for {ch}'s reading {pinyin}"))?
             };
             // The lowest a user dictionary takes, as libchewing's rare words get.
@@ -62,7 +64,7 @@ pub(crate) fn write_unihan_dict(dict_dir: &Path) -> Result<(), Error> {
             "xtask/unicode-license.txt",
             dict_dir.join("unihan_license.txt"),
         )?;
-        eprintln!("Wrote {count} characters from Unihan");
+        eprintln!("Wrote {count} characters from Unihan, skipped {nasals} read as m or n");
         Ok(())
     })
 }
@@ -113,9 +115,25 @@ fn zhuyin(pinyin: &str) -> Option<String> {
         .then(|| syllable.to_string())
 }
 
+/// Syllabic m or n (𠮾 ǹ), which zhuyin has no syllable for: any other
+/// reading that finds none is a bug in [`zhuyin`].
+fn syllabic_nasal(pinyin: &str) -> bool {
+    !pinyin
+        .chars()
+        .any(|c| "aeiouüāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ".contains(c))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::zhuyin;
+    use super::{syllabic_nasal, zhuyin};
+
+    #[test]
+    fn only_syllabic_nasals_may_lack_zhuyin() {
+        assert!(syllabic_nasal("ǹ"));
+        assert!(syllabic_nasal("ḿ"));
+        assert!(!syllabic_nasal("bèng"));
+        assert!(!syllabic_nasal("lǘ"));
+    }
 
     #[test]
     fn zhuyin_from_tone_marked_pinyin() {

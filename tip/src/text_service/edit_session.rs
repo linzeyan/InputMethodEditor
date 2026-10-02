@@ -54,6 +54,13 @@ fn set_selection(
     result
 }
 
+/// Where the `chars`th character of `text` starts, in the UTF-16 units TSF
+/// counts. The engine counts characters, which take two units beyond the BMP
+/// (the rarer Unihan characters, emoji).
+fn utf16_offset(text: &str, chars: usize) -> i32 {
+    text.chars().take(chars).map(char::len_utf16).sum::<usize>() as i32
+}
+
 #[implement(ITfEditSession)]
 pub(super) struct InsertText {
     context: ITfContext,
@@ -141,7 +148,7 @@ impl ITfEditSession_Impl for SetCompositionString_Impl {
                 let mut moved = 0;
                 range.ShiftStart(
                     ec,
-                    pending.commit.chars().count() as i32,
+                    pending.commit.encode_utf16().count() as i32,
                     &mut moved,
                     ptr::null(),
                 )?;
@@ -151,8 +158,12 @@ impl ITfEditSession_Impl for SetCompositionString_Impl {
                 for seg in &pending.segments {
                     let segment_range = range.Clone()?;
                     segment_range.Collapse(ec, TF_ANCHOR_START)?;
-                    segment_range.ShiftEnd(ec, seg.1 as i32, &mut moved, ptr::null())?;
-                    segment_range.ShiftStart(ec, seg.0 as i32, &mut moved, ptr::null())?;
+                    let (start, end) = (
+                        utf16_offset(&pending.preedit, seg.0),
+                        utf16_offset(&pending.preedit, seg.1),
+                    );
+                    segment_range.ShiftEnd(ec, end, &mut moved, ptr::null())?;
+                    segment_range.ShiftStart(ec, start, &mut moved, ptr::null())?;
                     if let Err(error) =
                         disp_attr_prop.SetValue(ec, &segment_range, atoms.next().unwrap())
                     {
@@ -163,8 +174,9 @@ impl ITfEditSession_Impl for SetCompositionString_Impl {
                 let cursor_range = range.Clone()?;
                 let mut moved = 0;
                 cursor_range.Collapse(ec, TF_ANCHOR_START)?;
-                cursor_range.ShiftEnd(ec, pending.cursor as i32, &mut moved, ptr::null())?;
-                cursor_range.ShiftStart(ec, pending.cursor as i32, &mut moved, ptr::null())?;
+                let cursor = utf16_offset(&pending.preedit, pending.cursor);
+                cursor_range.ShiftEnd(ec, cursor, &mut moved, ptr::null())?;
+                cursor_range.ShiftStart(ec, cursor, &mut moved, ptr::null())?;
                 set_selection(&self.context, ec, cursor_range, TF_AE_END)?;
             }
         }
