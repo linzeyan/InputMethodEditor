@@ -6,6 +6,8 @@
 //! to install it if it is newer.
 
 use std::error::Error;
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::os::windows::process::CommandExt;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,6 +15,7 @@ use std::{env, fs, thread};
 
 use chewing_tip_core::PRODUCT_NAME;
 use chewing_tip_core::config::Config;
+use chewing_tip_core::shell::user_dir;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
@@ -20,7 +23,7 @@ use windows::Win32::System::RemoteDesktop::{
     WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSFreeMemory, WTSINFOW,
     WTSQuerySessionInformationW, WTSSessionInfo,
 };
-use windows::Win32::System::SystemInformation::GetTickCount;
+use windows::Win32::System::SystemInformation::{GetLocalTime, GetTickCount};
 use windows::Win32::System::Threading::{
     AttachThreadInput, GetCurrentThreadId, GetExitCodeProcess, INFINITE, WaitForSingleObject,
 };
@@ -56,8 +59,11 @@ struct Asset {
 }
 
 pub fn check_update() {
-    // Nobody is there to read why a lookup failed; the next run tries again.
-    let _ = check();
+    // Nobody is there to read why a lookup failed but the log; the next run
+    // tries again.
+    if let Err(error) = check() {
+        trace(&format!("failed: {error}"));
+    }
 }
 
 fn check() -> Result<()> {
@@ -67,26 +73,59 @@ fn check() -> Result<()> {
     let config = Config::from_reg().unwrap_or_default().chewing_tsf;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let logon = config.check_update_at_logon.then(logon_time).flatten();
-    if !config.check_update || !due(last, now, config.update_check_days, logon) {
+    let looking = config.check_update && due(last, now, config.update_check_days, logon);
+    let current = env!("CARGO_PKG_VERSION");
+    trace(&format!(
+        "{current} now={now} last={last} logon={logon:?} enabled={} days={} at_logon={} looking={looking}",
+        config.check_update, config.update_check_days, config.check_update_at_logon
+    ));
+    if !looking {
         return Ok(());
     }
     let found = find()?;
     key.set_u64("LastUpdateCheck", now)?;
 
     let Some((latest, asset)) = found else {
+        trace("up to date");
         return Ok(());
     };
-    let current = env!("CARGO_PKG_VERSION");
+    trace(&format!("offering {latest}"));
     let question = format!(
         "InputMethodEditor {latest} 已經推出，目前使用的是 {current}。\n\n要下載並安裝嗎？"
     );
     if show(&question, MB_YESNO | MB_ICONINFORMATION) != IDYES {
+        trace("declined");
         return Ok(());
     }
-    if let Err(error) = install(&asset, &latest) {
-        show(&format!("無法更新：{error}"), MB_ICONERROR);
+    match install(&asset, &latest) {
+        Ok(installed) => trace(&format!("installed={installed}")),
+        Err(error) => {
+            trace(&format!("install failed: {error}"));
+            show(&format!("無法更新：{error}"), MB_ICONERROR);
+        }
     }
     Ok(())
+}
+
+/// Appends a line to update.log in the user folder: the scheduled runs have
+/// no window, and a missing line says the task never started. Always on, as
+/// a switch would miss the first failure; started over past 64 KiB, months
+/// of runs.
+fn trace(text: &str) {
+    let Ok(dir) = user_dir() else { return };
+    let path = dir.join("update.log");
+    if fs::metadata(&path).is_ok_and(|meta| meta.len() > 64 * 1024) {
+        let _ = fs::remove_file(&path);
+    }
+    let time = unsafe { GetLocalTime() };
+    let line = format!(
+        "{}-{:02}-{:02} {:02}:{:02}:{:02} {text}\r\n",
+        time.wYear, time.wMonth, time.wDay, time.wHour, time.wMinute, time.wSecond
+    );
+    // No folder means the IME never ran for this user; nothing to explain.
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = file.write_all(line.as_bytes());
+    }
 }
 
 /// 立即檢查更新 in the settings: the newer version, if any. Asked to, it
