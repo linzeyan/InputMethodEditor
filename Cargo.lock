@@ -486,7 +486,7 @@ dependencies = [
 
 [[package]]
 name = "chewing_tip"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "cc",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "chewing_tip_core"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "log",
  "scoped-error",
@@ -1763,7 +1763,7 @@ dependencies = [
 
 [[package]]
 name = "ime-settings"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4377,7 +4377,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tsfreg"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "chewing_tip_core",
  "windows 0.62.2",
@@ -5399,7 +5399,7 @@ checksum = "32ac00cd3f8ec9c1d33fb3e7958a82df6989c42d747bd326c822b1d625283547"
 
 [[package]]
 name = "xtask"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "chewing",
  "indoc",
