@@ -1408,19 +1408,11 @@ const Apps = ({ config, styles, setConfig }) => {
     name === "english_apps" ? "chinese_apps" : "english_apps";
   const keys = (name: string) =>
     new Set<string>(config[name].split("\n").map(appKey));
-  // Appended to one list and dropped from the other, where the IME would
-  // otherwise still find it.
   const add = (name: string, exes: string[]) => {
-    const other = otherList(name);
-    const added = new Set(exes.map(appKey));
     const kept = config[name].trimEnd();
     setConfig({
       ...config,
       [name]: (kept ? kept + "\n" : "") + exes.join("\n"),
-      [other]: config[other]
-        .split("\n")
-        .filter((line: string) => !added.has(appKey(line)))
-        .join("\n"),
     });
     setPicking(undefined);
   };
@@ -1460,7 +1452,7 @@ const Apps = ({ config, styles, setConfig }) => {
           title={`開啟或切換到時用${APP_LISTS[picking].mode}的程式`}
           listed={keys(picking)}
           other={keys(otherList(picking))}
-          otherLabel={`目前用${APP_LISTS[otherList(picking)].mode}`}
+          otherLabel={`已在${APP_LISTS[otherList(picking)].mode}清單`}
           onAdd={(exes) => add(picking, exes)}
           onClose={() => setPicking(undefined)}
         />

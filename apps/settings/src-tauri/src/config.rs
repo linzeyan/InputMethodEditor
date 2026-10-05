@@ -101,6 +101,12 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
     // Before anything is saved, so a bad line leaves all as it was; the user
     // fixes it from the message, which needs no source location.
     phrases::parse(&config.custom_phrase_dat).map_err(|error| format!("自訂詞組{error}"))?;
+    let apps = &config.chewing_tsf;
+    if let Some(app) = in_both(&apps.english_apps, &apps.chinese_apps) {
+        return Err(format!(
+            "各程式：{app} 同時列在英數和中文兩邊，請從其中一邊刪掉"
+        ));
+    }
     fn inner(config: &mut Config) -> Result<(), Error> {
         expect_error("無法儲存設定", || {
             config.save_reg();
@@ -140,4 +146,39 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
     }
 
     inner(&mut config).map_err(|e| e.report().to_string())
+}
+
+/// A program listed for both modes, matched as the IME does: in any case,
+/// with or without .exe. The IME would quietly take English.
+fn in_both(english: &str, chinese: &str) -> Option<String> {
+    let keys = |apps: &str| -> Vec<String> {
+        apps.lines()
+            .map(|app| app.trim().to_lowercase())
+            .filter(|app| !app.is_empty())
+            .map(|app| {
+                if app.ends_with(".exe") {
+                    app
+                } else {
+                    format!("{app}.exe")
+                }
+            })
+            .collect()
+    };
+    let english = keys(english);
+    keys(chinese).into_iter().find(|app| english.contains(app))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::in_both;
+
+    #[test]
+    fn in_both_matches_as_the_ime_does() {
+        // Blank lines sit in both lists all the time and mean nothing.
+        assert_eq!(in_both("chrome.exe\n\n", "\nTelegram\n"), None);
+        assert_eq!(
+            in_both("code.exe\r\nChrome\r\n", "Telegram\n chrome.EXE "),
+            Some("chrome.exe".to_owned())
+        );
+    }
 }
