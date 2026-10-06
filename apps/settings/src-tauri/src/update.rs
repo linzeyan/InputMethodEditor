@@ -258,9 +258,13 @@ fn run_elevated(file: &str, parameters: &str) -> Result<Option<u32>> {
 }
 
 /// Windows' own curl, whose TLS is the system's: certificates and all.
+/// Schannel fails the whole request when it can't reach the revocation list
+/// (CRYPT_E_NO_REVOCATION_CHECK: firewalls, TLS-inspecting proxies);
+/// best effort still rejects a certificate it finds revoked.
 fn curl(args: &[&str]) -> Result<Vec<u8>> {
     let output = Command::new("curl.exe")
         .args(["--fail", "--silent", "--show-error", "--location"])
+        .arg("--ssl-revoke-best-effort")
         .args(["--max-time", "600"])
         .args(args)
         .creation_flags(CREATE_NO_WINDOW)
