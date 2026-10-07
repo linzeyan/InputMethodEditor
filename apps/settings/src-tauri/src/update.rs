@@ -19,6 +19,7 @@ use chewing_tip_core::shell::user_dir;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
+use windows::Win32::Globalization::{CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar};
 use windows::Win32::System::RemoteDesktop::{
     WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSFreeMemory, WTSINFOW,
     WTSQuerySessionInformationW, WTSSessionInfo,
@@ -270,9 +271,24 @@ fn curl(args: &[&str]) -> Result<Vec<u8>> {
         .creation_flags(CREATE_NO_WINDOW)
         .output()?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().into());
+        return Err(ansi(&output.stderr).trim().into());
     }
     Ok(output.stdout)
+}
+
+/// curl writes Windows' own error text (Schannel's, for one) in the ANSI
+/// code page, Big5 on Traditional Chinese Windows; read as UTF-8, all of it
+/// became U+FFFD in update.log and the error shown.
+fn ansi(bytes: &[u8]) -> String {
+    if let Ok(text) = std::str::from_utf8(bytes) {
+        return text.to_owned();
+    }
+    unsafe {
+        let flags = MULTI_BYTE_TO_WIDE_CHAR_FLAGS(0);
+        let mut wide = vec![0; MultiByteToWideChar(CP_ACP, flags, bytes, None) as usize];
+        let len = MultiByteToWideChar(CP_ACP, flags, bytes, Some(&mut wide)) as usize;
+        String::from_utf16_lossy(&wide[..len])
+    }
 }
 
 fn show(text: &str, style: MESSAGEBOX_STYLE) -> MESSAGEBOX_RESULT {
@@ -324,7 +340,17 @@ fn wait_until_idle() {
 
 #[cfg(test)]
 mod tests {
-    use super::{due, newer};
+    use super::{ansi, due, newer};
+
+    #[test]
+    fn curl_errors_keep_the_windows_text() {
+        // 無法 in Big5, as curl writes Schannel's text on Traditional Chinese
+        // Windows: it must reach update.log readable, not as U+FFFD.
+        let text = ansi(b"schannel: \xb5L\xaak");
+        assert!(text.starts_with("schannel: "), "{text}");
+        assert!(!text.contains('\u{fffd}'), "{text}");
+        assert_eq!(ansi("已離線".as_bytes()), "已離線");
+    }
 
     #[test]
     fn newer_compares_numbers_not_text() {
