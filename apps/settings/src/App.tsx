@@ -31,6 +31,7 @@ import {
   SelectOnChangeData,
 } from "@fluentui/react-components";
 import { invoke } from "@tauri-apps/api/core";
+import { getAllWindows } from "@tauri-apps/api/window";
 import React, { ChangeEvent, useEffect } from "react";
 import { ChewingTsfConfig, Config, KeybindValue } from "./config";
 import { exit } from "@tauri-apps/plugin-process";
@@ -38,6 +39,7 @@ import { listen } from "@tauri-apps/api/event";
 import { ask, message, open, save } from "@tauri-apps/plugin-dialog";
 import KeybindingTab from "./KeybindingTab";
 import { ProgramPicker, appKey } from "./ProgramPicker";
+import { isDark } from "./theme";
 
 type FontFamilyName = {
   name: string;
@@ -74,6 +76,12 @@ const useStyles = makeStyles({
   // which covers only the box and takes none while disabled.
   hint: {
     width: "fit-content",
+  },
+  reset: {
+    position: "absolute",
+    bottom: "-4em",
+    left: "16px",
+    paddingBottom: "1em",
   },
   action: {
     position: "absolute",
@@ -185,6 +193,62 @@ function keyboard_layout_to_value(layout: number): string {
   }
 }
 
+// The settings each tab shows, which its reset puts back; the symbol tables
+// go back too. The program lists and custom phrases are the user's own, with
+// nothing to go back to.
+const TAB_SETTINGS: Record<string, (keyof ChewingTsfConfig)[]> = {
+  "1": [
+    "switch_lang_with_shift",
+    "enable_caps_lock",
+    "default_english",
+    "show_notification",
+    "shift_key_sensitivity",
+    "lock_chinese_on_caps_lock",
+    "sync_lang_mode_openclose",
+    "full_shape_symbols",
+    "ctrl_full_shape_symbols",
+    "upper_case_with_shift",
+    "easy_symbols_with_shift",
+    "easy_symbols_with_shift_ctrl",
+    "enable_fullwidth_toggle",
+    "show_fullwidth_notification",
+    "sel_key_type",
+    "cursor_cand_list",
+    "show_cand_with_space_key",
+    "phrase_choice_rearward",
+    "advance_after_selection",
+    "sort_candidates_by_frequency",
+    "conv_engine",
+    "pinyin",
+    "esc_clean_all_buf",
+    "add_phrase_forward",
+    "enable_auto_learn",
+    "output_simp_chinese",
+    "output_simp_vocabulary",
+  ],
+  "2": [
+    "cand_per_row",
+    "cand_per_page",
+    "font_size",
+    "font_family",
+    "font_fg_color",
+    "font_bg_color",
+    "font_highlight_fg_color",
+    "font_highlight_bg_color",
+    "font_number_fg_color",
+    "cand_list_border_color",
+    "notify_fg_color",
+    "notify_bg_color",
+    "notify_border_color",
+  ],
+  "3": ["keyboard_layout", "simulate_english_layout"],
+  pinyin: ["fuzzy_pinyin", "shuangpin"],
+  keybind: ["keybind"],
+  "4": ["enable_symbol_key", "symbol_key"],
+  "5": [],
+  update: ["check_update", "update_check_days", "check_update_at_logon"],
+};
+
 // Every color field takes the same format.
 const RGBA =
   "格式是十六進位 RRGGBBAA，最後兩位是不透明度（FF 為完全不透明），例如 000000FF 是黑色。";
@@ -199,6 +263,7 @@ function App() {
   const [swkb_dat, setSwkbDat] = React.useState<string>("");
   const [custom_phrase_dat, setCustomPhraseDat] = React.useState<string>("");
   const [showAdvanced, setShowAdvanced] = React.useState<boolean>(false);
+  const [defaults, setDefaults] = React.useState<Config>();
 
   useEffect(() => {
     const unlisten_import = listen("import", async () => {
@@ -262,6 +327,40 @@ function App() {
       setCustomPhraseDat(config.custom_phrase_dat);
     });
   }, []);
+
+  useEffect(() => {
+    invoke<Config>("default_config").then(setDefaults);
+  }, []);
+
+  // Dark candidate colors turn these windows dark at once, as the settings
+  // app does when they open; light leaves them to Windows.
+  const dark = config && isDark(config.font_bg_color);
+  useEffect(() => {
+    if (dark === undefined) {
+      return;
+    }
+    getAllWindows().then((wins) =>
+      wins.forEach((w) => w.setTheme(dark ? "dark" : null)),
+    );
+  }, [dark]);
+
+  const resettable = TAB_SETTINGS[selectedTab as string];
+  // Only the form: 確定 or 套用 saves it, 取消 leaves things as they were.
+  const resetTab = () => {
+    if (!defaults || !resettable) {
+      return;
+    }
+    const reset = Object.fromEntries(
+      resettable.map((name) => [name, defaults.chewing_tsf[name]]),
+    );
+    setConfig({ ...config, ...reset } as ChewingTsfConfig);
+    if (selectedTab === "4") {
+      setSymbolsDat(defaults.symbols_dat);
+    }
+    if (selectedTab === "5") {
+      setSwkbDat(defaults.swkb_dat);
+    }
+  };
 
   useEffect(() => {
     invoke("get_system_fonts").then((value) => {
@@ -417,6 +516,11 @@ function App() {
           setNumberConfig={setNumberConfig}
         />
       )}
+      <div className={styles.reset}>
+        <Button disabled={!defaults || !resettable} onClick={resetTab}>
+          還原此頁預設值
+        </Button>
+      </div>
       <div className={styles.action}>
         <Button
           onClick={() => {

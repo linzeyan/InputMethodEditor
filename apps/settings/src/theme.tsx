@@ -19,3 +19,10 @@ export function usePrefersColorScheme() {
 
   return isDarkMode;
 }
+
+/** Whether the candidate list's background is dark, as `is_dark` in the
+ * settings app tells; the settings' windows go dark with it. */
+export function isDark(rgba: string): boolean {
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(rgba.slice(i, i + 2), 16));
+  return 299 * r + 587 * g + 114 * b < 128000;
+}

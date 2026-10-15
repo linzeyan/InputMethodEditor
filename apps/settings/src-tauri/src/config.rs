@@ -96,6 +96,21 @@ pub(crate) fn load_config() -> Result<Config, String> {
     inner().map_err(|e| e.report().to_string())
 }
 
+/// What each setting starts as, the tables being the system's.
+#[tauri::command]
+pub(crate) fn default_config() -> Config {
+    let system = |file| {
+        system_path_for_file(file)
+            .and_then(|path| expect_error("無法讀取系統檔案", || Ok(fs::read_to_string(path)?)))
+            .unwrap_or_default()
+    };
+    Config {
+        symbols_dat: system("symbols.dat"),
+        swkb_dat: system("swkb.dat"),
+        ..Default::default()
+    }
+}
+
 #[tauri::command]
 pub fn save_config(mut config: Config) -> Result<(), String> {
     // Before anything is saved, so a bad line leaves all as it was; the user
@@ -116,10 +131,14 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
                     expect_error("無法讀取符號檔", || Ok(fs::read_to_string(path)?))
                 })
                 .unwrap_or_default();
+            let user_symbols_dat_path = default_user_path_for_file("symbols.dat")?;
             if config.symbols_dat != sys_symbols_dat {
-                let user_symbols_dat_path = default_user_path_for_file("symbols.dat")?;
                 fs::create_dir_all(user_symbols_dat_path.parent().unwrap())?;
                 fs::write(user_symbols_dat_path, &config.symbols_dat)?;
+            } else if user_symbols_dat_path.exists() {
+                // Put back as the system's, as by resetting: the old copy
+                // would go on being read.
+                fs::remove_file(user_symbols_dat_path)?;
             }
 
             let sys_swkb_dat = system_path_for_file("swkb.dat")
@@ -129,10 +148,12 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
                     })
                 })
                 .unwrap_or_default();
+            let user_swkb_dat_path = default_user_path_for_file("swkb.dat")?;
             if config.swkb_dat != sys_swkb_dat {
-                let user_swkb_dat_path = default_user_path_for_file("swkb.dat")?;
                 fs::create_dir_all(user_swkb_dat_path.parent().unwrap())?;
                 fs::write(user_swkb_dat_path, &config.swkb_dat)?;
+            } else if user_swkb_dat_path.exists() {
+                fs::remove_file(user_swkb_dat_path)?;
             }
 
             let phrases_path = default_user_path_for_file(PHRASES_FILE)?;
@@ -146,6 +167,21 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
     }
 
     inner(&mut config).map_err(|e| e.report().to_string())
+}
+
+/// Whether the candidate list is dark, by its background. The settings'
+/// windows go dark with it; light, they follow Windows, as before the
+/// candidate list was given colors. The frontend's `isDark` is the same.
+pub(crate) fn dark_candidates() -> bool {
+    Config::from_reg().is_ok_and(|cfg| is_dark(&cfg.chewing_tsf.font_bg_color))
+}
+
+fn is_dark(rgba: &str) -> bool {
+    let channel = |i: usize| u32::from_str_radix(rgba.get(i..i + 2)?, 16).ok();
+    match (channel(0), channel(2), channel(4)) {
+        (Some(r), Some(g), Some(b)) => 299 * r + 587 * g + 114 * b < 128_000,
+        _ => false,
+    }
 }
 
 /// A program listed for both modes, matched as the IME does: in any case,
@@ -170,7 +206,15 @@ fn in_both(english: &str, chinese: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::in_both;
+    use super::{in_both, is_dark};
+
+    #[test]
+    fn the_dark_theme_is_dark_and_the_default_light() {
+        assert!(is_dark("333333FF"));
+        assert!(!is_dark("FAFAFAFF"));
+        // Typed wrong, it stays as Windows has it.
+        assert!(!is_dark("33"));
+    }
 
     #[test]
     fn in_both_matches_as_the_ime_does() {

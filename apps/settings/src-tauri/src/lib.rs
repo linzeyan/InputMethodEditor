@@ -2,6 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use self::config::default_config;
 use self::config::export_config;
 use self::config::import_config;
 use self::config::load_config;
@@ -12,6 +13,7 @@ use chewing_tip_core::SETTINGS_SCHEME;
 use tauri::Emitter;
 use tauri::LogicalSize;
 use tauri::Manager;
+use tauri::Theme;
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
 
 mod config;
@@ -63,6 +65,12 @@ pub fn run() {
             let menu = MenuBuilder::new(app)
                 .items(&[&file_menu, &about_menu])
                 .build()?;
+            // Before they show, so a dark one doesn't flash light first.
+            if config::dark_candidates() {
+                for window in app.webview_windows().values() {
+                    window.set_theme(Some(Theme::Dark))?;
+                }
+            }
             if let Some(window) = app.get_webview_window("main") {
                 if dictionary {
                     window.set_title("InputMethodEditor 使用者詞庫")?;
@@ -95,6 +103,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            default_config,
             import_config,
             export_config,
             load_config,
