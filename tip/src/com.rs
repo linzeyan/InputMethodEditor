@@ -18,7 +18,7 @@ use windows::core::{
 };
 
 use crate::{
-    logging::{self, WinDbg},
+    logging::{self, FileLog, WinDbg},
     text_service::TextService,
 };
 
@@ -34,22 +34,25 @@ extern "system" fn DllMain(
         let g_hinstance = G_HINSTANCE.load(Ordering::Relaxed);
         if g_hinstance == 0 {
             G_HINSTANCE.store(hmodule as usize, Ordering::Relaxed);
+            let mut logger = logforth::starter_log::builder();
             if logging::is_debugger_present() {
                 unsafe {
                     let _ = AttachConsole(ATTACH_PARENT_PROCESS);
                 }
-                logforth::starter_log::builder()
-                    .dispatch(|d| {
-                        d.filter(if cfg!(debug_assertions) {
-                            LevelFilter::MoreSevereEqual(Level::Debug)
-                        } else {
-                            LevelFilter::MoreSevereEqual(Level::Info)
-                        })
-                        .append(WinDbg::default())
-                        .append(logforth::append::Stderr::default())
+                logger = logger.dispatch(|d| {
+                    d.filter(if cfg!(debug_assertions) {
+                        LevelFilter::MoreSevereEqual(Level::Debug)
+                    } else {
+                        LevelFilter::MoreSevereEqual(Level::Info)
                     })
-                    .apply();
+                    .append(WinDbg::default())
+                    .append(logforth::append::Stderr::default())
+                });
             }
+            logger.dispatch(|d| d.append(FileLog)).apply();
+            // The config is read later, outside the loader lock; until then
+            // nothing short of a warning touches the file.
+            logging::set_file_level("warn");
             log::info!("chewing_tip.dll loaded");
         }
     }

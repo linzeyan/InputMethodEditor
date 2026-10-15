@@ -1374,6 +1374,7 @@ impl Engine {
             .collect();
         self.keybindings = keybindings;
         let cfg = &self.cfg.chewing_tsf;
+        crate::logging::set_file_level(&cfg.log_level);
         self.symbol_key = cfg
             .enable_symbol_key
             .then(|| {

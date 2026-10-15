@@ -41,6 +41,13 @@ fn start_page() -> &'static str {
     }
 }
 
+/// Opens the folder of the text service's ime.log, to attach to a report.
+#[tauri::command]
+fn open_log_dir() -> Result<(), String> {
+    let dir = chewing_tip_core::shell::user_dir().map_err(|e| e.to_string())?;
+    tauri_plugin_opener::open_path(dir, None::<&str>).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -120,6 +127,7 @@ pub fn run() {
             programs::list_programs,
             update::find_update,
             update::install_update,
+            open_log_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

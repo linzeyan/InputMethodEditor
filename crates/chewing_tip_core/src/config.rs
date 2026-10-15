@@ -118,6 +118,9 @@ pub struct ChewingTsfConfig {
     pub update_check_days: i32,
     /// Also looks once after each logon, however long since the last time.
     pub check_update_at_logon: bool,
+    /// The least severe level the text service writes to ime.log: error,
+    /// warn, info, debug or trace. Debug and below record the text typed.
+    pub log_level: String,
     pub modified_timestamp: u64,
 }
 
@@ -192,6 +195,7 @@ impl Default for ChewingTsfConfig {
             check_update: true,
             update_check_days: 7,
             check_update_at_logon: true,
+            log_level: "warn".to_owned(),
             modified_timestamp: 0,
         }
     }
@@ -378,6 +382,9 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "CheckUpdateAtLogon") {
                 cfg.check_update_at_logon = value;
             }
+            if let Ok(value) = key.get_string("LogLevel") {
+                cfg.log_level = value;
+            }
             if let Ok(value) = key.get_u64("ModifiedTimestamp") {
                 cfg.modified_timestamp = value;
             }
@@ -550,6 +557,7 @@ impl Config {
             "CheckUpdateAtLogon",
             chewing_tsf.check_update_at_logon,
         );
+        let _ = key.set_string("LogLevel", &chewing_tsf.log_level);
         let _ = key.set_multi_string(
             "Keybind".to_string(),
             chewing_tsf

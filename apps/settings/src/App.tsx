@@ -246,7 +246,7 @@ const TAB_SETTINGS: Record<string, (keyof ChewingTsfConfig)[]> = {
   keybind: ["keybind"],
   "4": ["enable_symbol_key", "symbol_key"],
   "5": [],
-  update: ["check_update", "update_check_days", "check_update_at_logon"],
+  update: ["check_update", "update_check_days", "check_update_at_logon", "log_level"],
 };
 
 // Every color field takes the same format.
@@ -447,7 +447,7 @@ function App() {
         <Tab value="4">特殊符號</Tab>
         <Tab value="5">快捷符號</Tab>
         <Tab value="phrases">自訂詞組</Tab>
-        <Tab value="update">更新</Tab>
+        <Tab value="update">更新與記錄</Tab>
       </TabList>
       {selectedTab === "1" && config && (
         <InputBehaviors
@@ -512,6 +512,7 @@ function App() {
         <Update
           config={config}
           styles={styles}
+          setConfig={setConfig}
           setBooleanConfig={setBooleanConfig}
           setNumberConfig={setNumberConfig}
         />
@@ -1257,7 +1258,13 @@ const Pinyin = ({ config, styles, setConfig }) => {
   );
 };
 
-const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => {
+const Update = ({
+  config,
+  styles,
+  setBooleanConfig,
+  setNumberConfig,
+  setConfig,
+}) => {
   const [status, setStatus] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const checkNow = async () => {
@@ -1347,8 +1354,50 @@ const Update = ({ config, styles, setBooleanConfig, setNumberConfig }) => {
         </Button>
         <Text>{status}</Text>
       </div>
+      <Group title="問題記錄" />
+      <Tooltip
+        content="輸入法把發生的事記在 %AppData%\InputMethodEditor\ime.log，超過 1 MB 換到 ime.old.log；回報問題時附上這兩個檔。debug 和 trace 會記下每個按鍵和打出的字，找到問題後請改回 warn。"
+        relationship="description"
+      >
+        <Field label="記錄等級：" orientation="horizontal">
+          <Dropdown
+            value={LOG_LEVELS[config.log_level] ?? config.log_level}
+            selectedOptions={[config.log_level]}
+            onOptionSelect={(_ev, data) =>
+              setConfig({
+                ...config,
+                log_level: data.optionValue || "warn",
+              } as ChewingTsfConfig)
+            }
+          >
+            {Object.entries(LOG_LEVELS).map(([level, label]) => (
+              <Option key={level} value={level}>
+                {label}
+              </Option>
+            ))}
+          </Dropdown>
+        </Field>
+      </Tooltip>
+      <Button
+        style={{ marginTop: "12px" }}
+        onClick={() =>
+          invoke("open_log_dir").catch((e) =>
+            message(`無法開啟記錄檔資料夾：${e}`, { kind: "error" }),
+          )
+        }
+      >
+        開啟記錄檔資料夾
+      </Button>
     </div>
   );
+};
+
+const LOG_LEVELS = {
+  error: "error：只記錯誤",
+  warn: "warn：錯誤與警告（預設）",
+  info: "info：再加上狀態變化",
+  debug: "debug：再加上按鍵與打出的字",
+  trace: "trace：全部",
 };
 
 const APP_LISTS = {

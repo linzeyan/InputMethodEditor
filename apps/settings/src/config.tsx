@@ -55,6 +55,7 @@ export type ChewingTsfConfig = {
   check_update: boolean;
   update_check_days: number;
   check_update_at_logon: boolean;
+  log_level: string;
 };
 
 export type KeybindValue = {
