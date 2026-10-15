@@ -392,6 +392,18 @@ impl Editor {
     pub fn cursor(&self) -> usize {
         self.shared.cursor()
     }
+    /// Where the caret shows: at the cursor, except while a phrase is chosen
+    /// rearward, when the cursor is on its last symbol and the caret stays
+    /// after it.
+    pub fn caret(&self) -> usize {
+        let any = self.state.as_ref() as &dyn Any;
+        match any.downcast_ref::<Selecting>().map(|s| &s.sel) {
+            _ if !self.shared.options.phrase_choice_rearward => self.cursor(),
+            Some(Selector::Phrase(sel)) => sel.end(),
+            Some(Selector::SpecialSymmbol(_)) => self.cursor() + 1,
+            _ => self.cursor(),
+        }
+    }
 
     // TODO: deprecate other direct set methods
     pub fn editor_options(&self) -> EditorOptions {
@@ -1142,7 +1154,7 @@ struct Highlighting {
 
 impl Entering {
     fn start_selecting(&self, editor: &mut SharedState) -> Transition {
-        match editor.com.symbol_for_select() {
+        match editor.com.symbol_for_select(editor.options.phrase_choice_rearward) {
             Some(symbol) => {
                 if symbol.is_syllable() {
                     Transition::ToState(Box::new(Selecting::new_phrase(editor)))
@@ -1155,7 +1167,7 @@ impl Entering {
     }
     fn start_selecting_or_input_space(&self, editor: &mut SharedState) -> Transition {
         debug!("buffer {}", editor.com);
-        match editor.com.symbol_for_select() {
+        match editor.com.symbol_for_select(editor.options.phrase_choice_rearward) {
             Some(symbol) => {
                 if symbol.is_syllable() {
                     Transition::ToState(Box::new(Selecting::new_phrase(editor)))
@@ -1458,7 +1470,7 @@ impl EnteringSyllable {
     }
     fn start_selecting(&self, editor: &mut SharedState) -> Transition {
         editor.syl.clear();
-        match editor.com.symbol_for_select() {
+        match editor.com.symbol_for_select(editor.options.phrase_choice_rearward) {
             Some(symbol) => {
                 if symbol.is_syllable() {
                     Transition::ToState(Box::new(Selecting::new_phrase(editor)))
@@ -1554,7 +1566,7 @@ impl State for EnteringSyllable {
 impl Selecting {
     fn new_phrase(editor: &mut SharedState) -> Self {
         editor.com.push_cursor();
-        editor.com.clamp_cursor();
+        editor.com.move_cursor_to_select(editor.options.phrase_choice_rearward);
 
         let mut sel = PhraseSelector::new(
             !editor.options.phrase_choice_rearward,
@@ -1595,7 +1607,7 @@ impl Selecting {
     }
     fn new_special_symbol(editor: &mut SharedState, symbol: Symbol) -> Self {
         editor.com.push_cursor();
-        editor.com.clamp_cursor();
+        editor.com.move_cursor_to_select(editor.options.phrase_choice_rearward);
 
         let sel = SpecialSymbolSelector::new(symbol);
         if sel.menu().is_empty() {
@@ -1643,15 +1655,16 @@ impl Selecting {
                             wid: *wid,
                         };
                         let len = selection.len();
+                        let end = selection.end;
                         editor.com.select(selection);
                         debug!("Auto Shift {}", editor.options.auto_shift_cursor);
                         editor.com.pop_cursor();
-                        if editor.options.auto_shift_cursor {
-                            if editor.options.phrase_choice_rearward {
-                                editor.com.move_cursor_right(1);
-                            } else {
-                                editor.com.move_cursor_right(len);
-                            }
+                        if editor.options.phrase_choice_rearward {
+                            // The cursor is after the phrase, as it was
+                            // before choosing, unless it was at the beginning.
+                            editor.com.move_cursor(end);
+                        } else if editor.options.auto_shift_cursor {
+                            editor.com.move_cursor_right(len);
                         }
                         self.start_entering()
                     }
@@ -2114,6 +2127,69 @@ mod tests {
             .all_candidates()
             .expect("should be in selection mode");
         assert_eq!(vec!["冊", "測"], candidates);
+    }
+
+    #[test]
+    fn rearward_choice_is_for_the_phrase_before_the_cursor() {
+        let mut builder = StringTableBuilder::new();
+        for word in ["冊", "測", "試", "是", "測試"] {
+            builder.insert(word);
+        }
+        let string_table = builder.build();
+        let ce4 = syl![bpmf::C, bpmf::E, bpmf::TONE4];
+        let shi4 = syl![bpmf::SH, bpmf::TONE4];
+        let mut dict_builder = StaticDictBuilder::new();
+        for (syllables, word) in [
+            (vec![ce4], "冊"),
+            (vec![ce4], "測"),
+            (vec![shi4], "試"),
+            (vec![shi4], "是"),
+            (vec![ce4, shi4], "測試"),
+        ] {
+            dict_builder.insert(&syllables, string_table.get_wid(word).unwrap());
+        }
+        let mut editor = EditorBuilder::new()
+            .string_table(string_table)
+            .static_dict(dict_builder.build())
+            .build();
+        editor.set_editor_options(|opt| opt.sort_candidates_by_frequency = false);
+        let key = |code, ksym| KeyboardEvent::builder().code(code).ksym(ksym).build();
+        let down = key(keycode::KEY_DOWN, keysym::SYM_DOWN);
+        let left = key(keycode::KEY_LEFT, keysym::SYM_LEFT);
+        // ㄘㄜˋㄕˋㄘㄜˋ
+        for ascii in *b"hk4g4hk4" {
+            editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+        }
+
+        // Forward, as Microsoft's: the phrase after the cursor, before the
+        // last one.
+        editor.process_keyevent(left);
+        editor.process_keyevent(down);
+        assert_eq!(vec!["冊", "測"], editor.all_candidates().unwrap());
+        assert_eq!(2, editor.caret());
+        editor.cancel_selecting().unwrap();
+
+        editor.set_editor_options(|opt| opt.phrase_choice_rearward = true);
+        // Rearward, as macOS's: the phrase before the cursor, which stays
+        // after it while choosing and after it.
+        editor.process_keyevent(down);
+        assert_eq!(vec!["測試"], editor.all_candidates().unwrap());
+        assert_eq!(2, editor.caret());
+        editor.select(0).unwrap();
+        assert_eq!(2, editor.cursor());
+        // At the beginning, there is none before; the first one.
+        editor.process_keyevent(key(keycode::KEY_HOME, keysym::SYM_HOME));
+        editor.process_keyevent(down);
+        assert_eq!(vec!["冊", "測"], editor.all_candidates().unwrap()[..2]);
+        assert_eq!(1, editor.caret());
+        editor.select(1).unwrap();
+        assert_eq!(1, editor.cursor());
+        // Cancelled, the cursor goes back where it was.
+        editor.process_keyevent(key(keycode::KEY_END, keysym::SYM_END));
+        editor.process_keyevent(down);
+        assert_eq!(3, editor.caret());
+        editor.process_keyevent(key(keycode::KEY_ESC, keysym::SYM_ESC));
+        assert_eq!(3, editor.cursor());
     }
 
     #[test]

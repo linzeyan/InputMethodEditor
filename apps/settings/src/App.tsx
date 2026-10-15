@@ -565,12 +565,12 @@ const InputBehaviors = ({
         </div>
       </Tooltip>
       <Tooltip
-        content="決定組字中按 ↓ 選字時，候選是哪一段的詞。不勾選：從游標所在的字往後，游標在最後時只有最後一個字；勾選：到游標所在的字為止往前。例如打完「我覺得」直接按 ↓，不勾選列出「得、德…」，勾選列出「覺得」。"
+        content="組字中按 ↓ 選字時，改的是游標哪一邊的詞。不勾選（微軟新注音的方式）：游標後面的詞，游標在最後時是最後一個字，選字時游標移到詞的前面。勾選（macOS 注音的方式）：游標前面、到游標為止的詞，游標一直留在詞的後面。例如打完「我覺得」直接按 ↓，不勾選列出「得、德…」，勾選列出「覺得」；按一次 ← 再按 ↓，不勾選改「得」，勾選改「覺」。"
         relationship="description"
       >
         <div className={styles.hint}>
           <Checkbox
-            label="啟用向後詞彙選詞模式"
+            label="游標在詞的後面選字（macOS 方式）"
             name="phrase_choice_rearward"
             checked={config?.phrase_choice_rearward}
             onChange={setBooleanConfig}
@@ -658,13 +658,14 @@ const InputBehaviors = ({
         </div>
       </Tooltip>
       <Tooltip
-        content="按 ↓ 選好一個詞後，游標自動移到它後面，可以接著選下一段；不勾選時游標留在原處。"
+        content="按 ↓ 選好一個詞後，游標自動移到它後面，可以接著選下一段；不勾選時游標留在原處。勾選「游標在詞的後面選字」時游標本來就在詞後面，這項停用。"
         relationship="description"
       >
         <div className={styles.hint}>
           <Checkbox
             label="選字完畢自動跳到下一個字"
             name="advance_after_selection"
+            disabled={config?.phrase_choice_rearward}
             checked={config?.advance_after_selection}
             onChange={setBooleanConfig}
           />

@@ -160,13 +160,21 @@ impl CompositionEditor {
     pub(crate) fn replace(&mut self, sym: Symbol) {
         self.inner.replace(self.cursor, sym);
     }
-    pub(crate) fn symbol_for_select(&self) -> Option<Symbol> {
-        let cursor = if self.is_end_of_buffer() {
+    /// The symbol a selection is for: the one after the cursor, the last one
+    /// at the end of the buffer. Chosen rearward, as macOS does, the one
+    /// before the cursor, the first one at the beginning.
+    fn select_index(&self, rearward: bool) -> usize {
+        if rearward || self.is_end_of_buffer() {
             self.cursor.saturating_sub(1)
         } else {
             self.cursor
-        };
-        self.inner.symbol(cursor)
+        }
+    }
+    pub(crate) fn move_cursor_to_select(&mut self, rearward: bool) {
+        self.cursor = self.select_index(rearward);
+    }
+    pub(crate) fn symbol_for_select(&self, rearward: bool) -> Option<Symbol> {
+        self.inner.symbol(self.select_index(rearward))
     }
     pub(crate) fn select(&mut self, selection: Selection) {
         self.inner.push_selection(selection);

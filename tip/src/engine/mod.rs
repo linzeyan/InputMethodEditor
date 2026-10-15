@@ -937,7 +937,8 @@ impl Engine {
         // has something in composition buffer
         if !composition_buf.is_empty() {
             let preedit = convert_preedit(&self.cfg.chewing_tsf, &composition_buf);
-            ui.set_composition_string(commit, preedit, segments, cursor)?;
+            let caret = self.chewing_editor.caret();
+            ui.set_composition_string(commit, preedit, segments, caret)?;
         } else {
             // nothing left in composition buffer, terminate composition status
             if self.is_composing(ui.has_composition()) {
