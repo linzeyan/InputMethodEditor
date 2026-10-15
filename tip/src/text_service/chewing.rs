@@ -85,6 +85,10 @@ struct TsfUi {
     pending_lang_mode_change: Cell<bool>,
 
     has_focus: bool,
+    /// The document the composition bar types into. The thread's focus
+    /// leaves after the document's, which `OnSetFocus` may skip, so by
+    /// then there is no focused document to commit what the bar shows to.
+    bar_context: Option<ITfContext>,
     composition: Rc<RefCell<Option<ITfComposition>>>,
     pending_edit: Weak<RefCell<Option<CompositionString>>>,
 }
@@ -179,6 +183,7 @@ impl ChewingTextService {
             popup_menu,
             lang_icons: LangIconSet::load(),
             has_focus: true,
+            bar_context: None,
             lang_bar_buttons,
             switch_lang_button,
             ime_mode_button,
@@ -236,9 +241,10 @@ impl ChewingTextService {
     /// Switching to another program ends an inline composition, the program
     /// ending it; one in the composition bar it ends here.
     pub(super) fn on_kill_thread_focus(&mut self) -> Result<()> {
+        let context = self.ui.bar_context.take();
         self.engine.commit_composition_bar(&mut Tsf {
             ui: &mut self.ui,
-            context: None,
+            context,
         })
     }
 
@@ -281,7 +287,12 @@ impl ChewingTextService {
             ui: &mut self.ui,
             context: Some(context.clone()),
         };
-        self.engine.on_keydown(&mut ui, ev)
+        let handled = self.engine.on_keydown(&mut ui, ev);
+        self.ui.bar_context = self
+            .engine
+            .has_composition_bar()
+            .then(|| context.clone());
+        handled
     }
 
     pub(super) fn on_test_keyup(

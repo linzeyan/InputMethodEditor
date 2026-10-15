@@ -1116,6 +1116,10 @@ impl Engine {
         }
     }
 
+    pub(crate) fn has_composition_bar(&self) -> bool {
+        self.composition_bar.is_some()
+    }
+
     fn composition_bar_rect(&self) -> Option<RECT> {
         self.composition_bar.as_ref()?.window_rect()
     }
