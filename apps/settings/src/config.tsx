@@ -21,6 +21,7 @@ export type ChewingTsfConfig = {
   easy_symbols_with_shift_ctrl: boolean;
   enable_symbol_key: boolean;
   symbol_key: string;
+  composition_bar: boolean;
   cursor_cand_list: boolean;
   sort_candidates_by_frequency: boolean;
   show_cand_with_space_key: boolean;

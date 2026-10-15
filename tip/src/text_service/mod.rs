@@ -362,7 +362,15 @@ impl ITfThreadFocusSink_Impl for TextService_Impl {
         Ok(())
     }
     fn OnKillThreadFocus(&self) -> Result<()> {
+        let _fp = FpGuard::enter();
         debug!("on_kill_thread_focus");
+        let mut borrowed_ts = self.inner.borrow_mut();
+        let Some(ts) = borrowed_ts.as_mut() else {
+            return Ok(());
+        };
+        if let Err(error) = ts.on_kill_thread_focus() {
+            error!("Unable to commit the composition bar: {error:#}");
+        }
         Ok(())
     }
 }

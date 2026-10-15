@@ -72,6 +72,9 @@ pub struct ChewingTsfConfig {
     /// keybinding's key, ` by default.
     pub enable_symbol_key: bool,
     pub symbol_key: String,
+    /// What is being typed shows in a bar of its own at the caret, as in
+    /// 自然輸入法, and only what is committed goes into the document.
+    pub composition_bar: bool,
     pub cursor_cand_list: bool,
     pub sort_candidates_by_frequency: bool,
     pub show_cand_with_space_key: bool,
@@ -145,6 +148,7 @@ impl Default for ChewingTsfConfig {
             easy_symbols_with_shift_ctrl: false,
             enable_symbol_key: true,
             symbol_key: "`".to_owned(),
+            composition_bar: false,
             cursor_cand_list: true,
             sort_candidates_by_frequency: false,
             show_cand_with_space_key: false,
@@ -328,6 +332,9 @@ impl Config {
             if let Ok(value) = reg_get_i32(&key, "SelAreaLen") {
                 cfg.cand_per_page = value;
             }
+            if let Ok(value) = reg_get_bool(&key, "CompositionBar") {
+                cfg.composition_bar = value;
+            }
             if let Ok(value) = reg_get_bool(&key, "CursorCandList") {
                 cfg.cursor_cand_list = value;
             }
@@ -503,6 +510,7 @@ impl Config {
         let _ = reg_set_i32(&key, "SelKeyType", chewing_tsf.sel_key_type);
         let _ = reg_set_i32(&key, "ConvEngine", chewing_tsf.conv_engine);
         let _ = reg_set_i32(&key, "SelAreaLen", chewing_tsf.cand_per_page);
+        let _ = reg_set_bool(&key, "CompositionBar", chewing_tsf.composition_bar);
         let _ = reg_set_bool(&key, "CursorCandList", chewing_tsf.cursor_cand_list);
         let _ = reg_set_bool(
             &key,

@@ -11,7 +11,7 @@ use anyhow::{Context, Result};
 use log::error;
 use scoped_error::expect_error;
 use windows::Win32::{
-    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, TRUE, WPARAM},
+    Foundation::{E_FAIL, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE, WPARAM},
     Graphics::{
         Direct2D::{
             Common::{D2D_RECT_F, D2D1_COLOR_F},
@@ -21,8 +21,8 @@ use windows::Win32::{
         DirectComposition::IDCompositionTarget,
         DirectWrite::{
             DWRITE_FACTORY_TYPE_SHARED, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_MEASURING_MODE_NATURAL, DWRITE_TEXT_METRICS,
-            DWriteCreateFactory, IDWriteFactory1,
+            DWRITE_FONT_WEIGHT_NORMAL, DWRITE_HIT_TEST_METRICS, DWRITE_MEASURING_MODE_NATURAL,
+            DWRITE_TEXT_METRICS, DWriteCreateFactory, IDWriteFactory1,
         },
         Dxgi::{
             Common::DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_PRESENT, DXGI_SWAP_CHAIN_FLAG, IDXGISwapChain1,
@@ -43,6 +43,7 @@ use windows_core::{
     BOOL, BSTR, ComObject, ComObjectInner, GUID, HSTRING, Interface, PCWSTR,
     Result as WindowsResult, implement, w,
 };
+use windows_numerics::Vector2;
 
 use crate::{
     text_service::ui_elements::UiError,
@@ -76,6 +77,9 @@ struct NotificationInner {
 #[derive(Default)]
 pub(crate) struct NotificationModel {
     pub(crate) text: HSTRING,
+    /// Where to draw a caret, in UTF-16 units into `text`: the composition
+    /// bar shows what is being typed, which the document then doesn't.
+    pub(crate) caret: Option<u32>,
     pub(crate) font_family: HSTRING,
     pub(crate) font_size: f32,
     pub(crate) fg_color: D2D1_COLOR_F,
@@ -332,6 +336,24 @@ impl View {
                         D2D1_DRAW_TEXT_OPTIONS_NONE,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
+                    if let Some(caret) = model.caret {
+                        let layout = dwrite_factory.CreateTextLayout(
+                            &model.text,
+                            &text_format,
+                            f32::MAX,
+                            f32::MAX,
+                        )?;
+                        let (mut x, mut y) = (0.0, 0.0);
+                        let mut hit = DWRITE_HIT_TEST_METRICS::default();
+                        layout.HitTestTextPosition(caret, false, &mut x, &mut y, &mut hit)?;
+                        dc.DrawLine(
+                            Vector2::new(margin + x, margin + y),
+                            Vector2::new(margin + x, margin + y + hit.height),
+                            &brush,
+                            1.5,
+                            None,
+                        );
+                    }
                     dc.EndDraw(None, None)?;
 
                     // Present the draw buffer
@@ -439,6 +461,10 @@ impl Notification {
             window.refresh();
             window.show();
         }
+    }
+    /// Where the window is on screen, if it is shown.
+    pub(crate) fn window_rect(&self) -> Option<RECT> {
+        self.inner.view.borrow().window()?.visible_rect()
     }
 }
 

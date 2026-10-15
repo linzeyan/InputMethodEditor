@@ -221,6 +221,7 @@ const TAB_SETTINGS: Record<string, (keyof ChewingTsfConfig)[]> = {
     "conv_engine",
     "pinyin",
     "esc_clean_all_buf",
+    "composition_bar",
     "add_phrase_forward",
     "enable_auto_learn",
     "output_simp_chinese",
@@ -758,6 +759,11 @@ const InputBehaviors = ({
           "esc_clean_all_buf",
           "使用 Esc 清空編輯區字串",
           "組字中按 Esc 清掉所有還沒送出的字。不勾選時，Esc 只清掉正在打的注音或拼音，已轉好的字保留。",
+        )}
+        {check(
+          "composition_bar",
+          "使用打字列",
+          "打的字先出現在游標下方的打字列，選好送出後才進到程式裡，像自然輸入法。適合不顯示組字的程式（遊戲、部分終端機），或不想讓組字中的字干擾文件排版時。離開視窗時打字列裡的字會直接送出。",
         )}
         {check(
           "add_phrase_forward",

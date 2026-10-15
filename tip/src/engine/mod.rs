@@ -181,6 +181,8 @@ pub(crate) struct Engine {
     symbol_key: Option<Keybinding>,
     pub(crate) chewing_editor: Editor,
     notification: Option<ComObject<Notification>>,
+    /// What is being typed, when it shows in a bar rather than the document.
+    composition_bar: Option<ComObject<Notification>>,
     candidate_list: Option<ComObject<CandidateList>>,
     /// For each slot in the candidate list, the editor's index on the current
     /// page. They differ once converted duplicates are hidden.
@@ -219,6 +221,7 @@ impl Engine {
             symbol_key: None,
             chewing_editor: editor,
             notification: Default::default(),
+            composition_bar: None,
             candidate_list: Default::default(),
             candidate_indices: vec![],
             space_undo: None,
@@ -984,6 +987,23 @@ impl Engine {
         }
 
         let commit = convert_output(&self.cfg.chewing_tsf, &commit);
+        // One already open inline, as the setting changed, ends inline.
+        if self.cfg.chewing_tsf.composition_bar && !ui.has_composition() {
+            if !commit.is_empty() {
+                ui.insert_text(&commit)?;
+            }
+            if composition_buf.is_empty() {
+                self.hide_composition_bar();
+            } else {
+                let preedit = convert_preedit(&self.cfg.chewing_tsf, &composition_buf);
+                let caret = self.chewing_editor.caret();
+                if let Err(error) = self.show_composition_bar(ui, &preedit, caret) {
+                    error!("{}", error.report());
+                }
+            }
+            return Ok(());
+        }
+        self.hide_composition_bar();
         // has something in composition buffer
         if !composition_buf.is_empty() {
             let preedit = convert_preedit(&self.cfg.chewing_tsf, &composition_buf);
@@ -1016,13 +1036,15 @@ impl Engine {
             let notification = Notification::new(hwnd, ui.thread_mgr())?;
             notification.set_model(NotificationModel {
                 text: HSTRING::from(text),
+                caret: None,
                 font_family: HSTRING::from(&self.cfg.chewing_tsf.font_family),
                 font_size: self.cfg.chewing_tsf.font_size as f32,
                 fg_color: color_s(&self.cfg.chewing_tsf.notify_fg_color),
                 bg_color: color_s(&self.cfg.chewing_tsf.notify_bg_color),
                 border_color: color_s(&self.cfg.chewing_tsf.notify_border_color),
             });
-            let position = match self.candidate_list.as_ref().and_then(|c| c.window_rect()) {
+            let shown = self.candidate_list.as_ref().and_then(|c| c.window_rect());
+            let position = match shown.or_else(|| self.composition_bar_rect()) {
                 // Below the candidate list, which is raised over anything in
                 // its way whenever it is redrawn.
                 Some(rect) => Some((rect.left, rect.bottom)),
@@ -1048,6 +1070,84 @@ impl Engine {
             notification.set_timer(Duration::ZERO);
             notification.end_ui_element();
         }
+    }
+
+    /// Shows `preedit` below the caret, in the candidate list's colors since
+    /// the list opens right below it; `caret` is a character offset.
+    fn show_composition_bar(
+        &mut self,
+        ui: &impl Frontend,
+        preedit: &str,
+        caret: usize,
+    ) -> Result<(), scoped_error::Error> {
+        expect_error("Failed to show the composition bar", || {
+            let bar = match &self.composition_bar {
+                Some(bar) => bar.clone(),
+                None => {
+                    let bar = Notification::new(ui.popup_parent()?, ui.thread_mgr())?;
+                    self.composition_bar = Some(bar.clone());
+                    bar
+                }
+            };
+            let cfg = &self.cfg.chewing_tsf;
+            let caret = preedit.chars().take(caret).map(char::len_utf16).sum::<usize>();
+            bar.set_model(NotificationModel {
+                text: HSTRING::from(preedit),
+                caret: Some(caret as u32),
+                font_family: HSTRING::from(&cfg.font_family),
+                font_size: cfg.font_size as f32,
+                fg_color: color_s(&cfg.font_fg_color),
+                bg_color: color_s(&cfg.font_bg_color),
+                border_color: color_s(&cfg.cand_list_border_color),
+            });
+            if let Ok(rect) = ui.caret_rect() {
+                bar.set_position(rect.left, rect.bottom);
+                // HACK set position again to use correct DPI setting
+                bar.set_position(rect.left, rect.bottom);
+            }
+            bar.show();
+            Ok(())
+        })
+    }
+
+    pub(crate) fn hide_composition_bar(&mut self) {
+        if let Some(bar) = self.composition_bar.take() {
+            bar.end_ui_element();
+        }
+    }
+
+    fn composition_bar_rect(&self) -> Option<RECT> {
+        self.composition_bar.as_ref()?.window_rect()
+    }
+
+    /// Puts what the composition bar shows into the document as the focus
+    /// leaves it: typed inline, it would stay there, and nothing else would
+    /// close the bar, which is over every window.
+    pub(crate) fn commit_composition_bar(&mut self, ui: &mut impl Frontend) -> Result<()> {
+        if self.composition_bar.is_none() {
+            return Ok(());
+        }
+        self.hide_composition_bar();
+        self.hide_candidates();
+        let editor = &mut self.chewing_editor;
+        if editor.is_selecting() {
+            let _ = editor.cancel_selecting();
+        }
+        // Fails on a bare syllable, which goes like the rest of it: zhuyin
+        // is no use in the document.
+        let commit = if editor.commit().is_ok() {
+            editor.flush();
+            let commit = editor.display_commit().to_owned();
+            editor.ack();
+            commit
+        } else {
+            String::new()
+        };
+        editor.clear_syllable_editor();
+        if commit.is_empty() {
+            return Ok(());
+        }
+        ui.insert_text(&convert_output(&self.cfg.chewing_tsf, &commit))
     }
 
     fn update_candidates(&mut self, ui: &impl Frontend) -> Result<(), scoped_error::Error> {
@@ -1100,7 +1200,10 @@ impl Engine {
 
                 candidate_list.show();
 
-                if let Ok(rect) = ui.caret_rect() {
+                if let Some(rect) = self
+                    .composition_bar_rect()
+                    .or_else(|| ui.caret_rect().ok())
+                {
                     candidate_list.set_position(rect.left, rect.bottom);
                     // HACK set position again to use correct DPI setting
                     candidate_list.set_position(rect.left, rect.bottom);
@@ -1295,10 +1398,10 @@ impl Engine {
         }
     }
 
-    /// When the candidate window is shown we are composing even without a
-    /// composition.
+    /// When the candidate window or the composition bar is shown we are
+    /// composing even without a composition.
     pub(crate) fn is_composing(&self, has_composition: bool) -> bool {
-        has_composition || self.candidate_list.is_some()
+        has_composition || self.candidate_list.is_some() || self.composition_bar.is_some()
     }
 
     fn init_chewing_context(&mut self, ui: &mut impl Frontend) -> Result<()> {

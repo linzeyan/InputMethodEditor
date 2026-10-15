@@ -216,14 +216,30 @@ impl ChewingTextService {
     pub(super) fn on_kill_focus(&mut self, context: Option<ITfContext>) -> Result<()> {
         debug!("on_kill_focus");
         self.ui.has_focus = false;
+        if let Some(context) = &context {
+            self.engine.commit_composition_bar(&mut Tsf {
+                ui: &mut self.ui,
+                context: Some(context.clone()),
+            })?;
+        }
         if self.engine.is_composing(self.ui.has_composition())
             && let Some(context) = context
         {
             self.ui.end_composition(&context)?;
         }
         self.engine.hide_candidates();
+        self.engine.hide_composition_bar();
         self.engine.hide_message();
         Ok(())
+    }
+
+    /// Switching to another program ends an inline composition, the program
+    /// ending it; one in the composition bar it ends here.
+    pub(super) fn on_kill_thread_focus(&mut self) -> Result<()> {
+        self.engine.commit_composition_bar(&mut Tsf {
+            ui: &mut self.ui,
+            context: None,
+        })
     }
 
     pub(super) fn on_focus(&mut self) -> Result<()> {
@@ -359,6 +375,12 @@ impl ChewingTextService {
         if guid == &GUID_COMPARTMENT_KEYBOARD_OPENCLOSE {
             self.engine.set_keyboard_open(self.ui.keyboard_open()?);
             self.sync_lang_mode(false)?;
+            if self.engine.lang_mode.get().is_disabled() {
+                self.engine.commit_composition_bar(&mut Tsf {
+                    ui: &mut self.ui,
+                    context: None,
+                })?;
+            }
             if self.engine.is_composing(self.ui.has_composition())
                 && self.engine.lang_mode.get().is_disabled()
             {
