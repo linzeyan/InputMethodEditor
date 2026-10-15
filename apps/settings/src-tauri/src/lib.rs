@@ -10,10 +10,12 @@ use self::config::save_config;
 use self::fonts::get_system_fonts;
 use self::version::app_version;
 use chewing_tip_core::SETTINGS_SCHEME;
+use tauri::AppHandle;
 use tauri::Emitter;
 use tauri::LogicalSize;
 use tauri::Manager;
 use tauri::Theme;
+use tauri::WebviewWindowBuilder;
 use tauri::menu::{MenuBuilder, SubmenuBuilder};
 
 mod config;
@@ -39,6 +41,22 @@ fn start_page() -> &'static str {
     } else {
         "settings"
     }
+}
+
+/// Made when asked for, not with the app: even hidden, a window costs a
+/// WebView2 renderer process, about 25 MB. It shows itself once drawn.
+fn open_about(app: &AppHandle) -> tauri::Result<()> {
+    let conf = app.config().app.windows.iter().find(|w| w.label == "about");
+    // The main window's, which may be a theme picked but not saved: webviews
+    // share one color scheme, so the saved one would turn the main window too.
+    let theme = app
+        .get_webview_window("main")
+        .map(|w| w.theme())
+        .transpose()?;
+    WebviewWindowBuilder::from_config(app, conf.expect("about in tauri.conf.json"))?
+        .theme(theme)
+        .build()?;
+    Ok(())
 }
 
 /// Opens the folder of the text service's ime.log, to attach to a report.
@@ -89,11 +107,12 @@ pub fn run() {
                 window.set_menu(menu)?;
                 let app = app.handle().clone();
                 window.on_menu_event(move |window, event| match event.id().0.as_str() {
-                    "about" => {
-                        if let Some(about_window) = app.get_webview_window("about") {
-                            about_window.show().expect("failed to show about window");
-                        }
-                    }
+                    "about" => match app.get_webview_window("about") {
+                        Some(about_window) => about_window
+                            .set_focus()
+                            .expect("failed to focus about window"),
+                        None => open_about(&app).expect("failed to open about window"),
+                    },
                     "export" => {
                         window
                             .emit("export", ())

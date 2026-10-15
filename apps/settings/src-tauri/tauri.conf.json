@@ -22,6 +22,8 @@
       },
       {
         "label": "about",
+        "create": false,
+        "center": true,
         "parent": "main",
         "url": "index.html#about",
         "title": "關於 InputMethodEditor",
@@ -29,7 +31,6 @@
         "height": 400,
         "resizable": true,
         "visible": false,
-        "closable": false,
         "maximizable": false,
         "minimizable": false,
         "windowEffects": { "effects": ["mica"] }

@@ -5,9 +5,8 @@
 import { Button, makeStyles, Body1 } from "@fluentui/react-components";
 import React, { useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getAllWindows, getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { exit } from "@tauri-apps/plugin-process";
 
 const useStyles = makeStyles({
   root: {
@@ -48,18 +47,9 @@ function About() {
     invoke("app_version").then((v) => {
       setVersion(v as string);
     });
+    // Made hidden, so it doesn't flash white before the page draws.
+    getCurrentWindow().show();
   }, []);
-
-  const hide_or_exit = async () => {
-    const wins = await getAllWindows();
-    const main = wins.find((w) => w.label == "main");
-    const main_is_visible = await main?.isVisible();
-    if (!main_is_visible) {
-      exit(0);
-    } else {
-      getCurrentWindow().hide();
-    }
-  };
 
   return (
     <div className={styles.root}>
@@ -97,7 +87,7 @@ function About() {
         </Body1>
       </div>
       <div className={styles.action}>
-        <Button onClick={hide_or_exit}>確定</Button>
+        <Button onClick={() => getCurrentWindow().close()}>確定</Button>
       </div>
     </div>
   );

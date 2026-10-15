@@ -9,9 +9,9 @@
   "permissions": [
     "core:app:default",
     "core:event:default",
-    "core:window:allow-hide",
     "core:window:allow-get-all-windows",
-    "core:window:allow-is-visible",
+    "core:window:allow-show",
+    "core:window:allow-close",
     "core:window:allow-title",
     "core:window:allow-set-title",
     "core:window:allow-set-theme",
