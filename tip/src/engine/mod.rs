@@ -32,11 +32,12 @@ use chewing::input::keymap::{
     INVERTED_DVORAK_MAP, INVERTED_QGMLWY_MAP, INVERTED_WORKMAN_MAP,
 };
 use chewing::input::keysym::{
-    Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_ESC, SYM_LEFTSHIFT, SYM_RIGHTSHIFT, SYM_SPACE,
+    Keysym, SYM_BACKSPACE, SYM_CAPSLOCK, SYM_ESC, SYM_GRAVE, SYM_LEFTSHIFT, SYM_RIGHTSHIFT,
+    SYM_SPACE,
 };
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
-use chewing_tip_core::config::{ChewingTsfConfig, Config};
+use chewing_tip_core::config::{ChewingTsfConfig, Config, KeybindValue};
 use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use chewing_tip_core::{PRODUCT_NAME, SETTINGS_SCHEME};
@@ -68,6 +69,11 @@ use crate::text_service::ui_elements::{
     CandidateList, FilterKeyResult, Model, Notification, NotificationModel,
 };
 use crate::ui::gfx::color_s;
+
+/// The keys Ctrl types fullwidth symbols with (chewing's ，。／；、「」): the
+/// unshifted punctuation, as Shift already gives the shifted ones theirs.
+/// Not - and =, which zoom.
+const CTRL_SYMBOL_KEYS: &str = ",./;'[]";
 
 const SEL_KEYS: [&str; 6] = [
     "1234567890",
@@ -171,6 +177,8 @@ pub(crate) struct Engine {
     kbtype: KeyboardLayoutCompat,
     keymap: KeymapOp,
     keybindings: Vec<Keybinding>,
+    /// What opens the symbol table, if anything does.
+    symbol_key: Option<Keybinding>,
     pub(crate) chewing_editor: Editor,
     notification: Option<ComObject<Notification>>,
     candidate_list: Option<ComObject<CandidateList>>,
@@ -208,6 +216,7 @@ impl Engine {
             kbtype: KeyboardLayoutCompat::Default,
             keymap: KeymapOp::None,
             keybindings: vec![],
+            symbol_key: None,
             chewing_editor: editor,
             notification: Default::default(),
             candidate_list: Default::default(),
@@ -303,6 +312,10 @@ impl Engine {
         if !is_context_mutable {
             return Ok(false);
         }
+        // Step 3.1 the symbol table's key, which may come with Ctrl or Alt
+        if self.is_symbol_key(&evt) {
+            return Ok(true);
+        }
         //
         // Step 4. ignore key events if they might be shortcut keys
         //
@@ -320,6 +333,8 @@ impl Engine {
                 && self.cfg.chewing_tsf.easy_symbols_with_shift_ctrl
             {
                 // need to handle easy symbol input
+                return Ok(true);
+            } else if self.is_ctrl_symbol(&evt) {
                 return Ok(true);
             } else {
                 debug!("key not handled - Ctrl modifier key was down");
@@ -455,6 +470,19 @@ impl Engine {
             return self.show_edit(ui, Some(phrase));
         }
 
+        let symbol_key = self.is_symbol_key(&evt);
+        if symbol_key {
+            // Chewing opens the table on a plain ` only.
+            evt = KeyboardEvent::builder()
+                .code(keycode::KEY_GRAVE)
+                .ksym(SYM_GRAVE)
+                .build();
+        } else if self.is_ctrl_symbol(&evt) {
+            // Chewing types the symbol for the character, but a zhuyin layout
+            // would read the key's code as a bopomofo (, is ㄝ).
+            evt = KeyboardEvent::builder().ksym(evt.ksym).control().build();
+        }
+
         let takes = if self.cfg.chewing_tsf.pinyin {
             match Scheme::from_config(self.cfg.chewing_tsf.shuangpin) {
                 Some(scheme) => shuangpin::takes(scheme, &evt),
@@ -480,6 +508,10 @@ impl Engine {
             let mut upper_case = false;
             if evt.is_state_on(KeyState::Shift) {
                 upper_case = true;
+            }
+            // With the symbol table on another key, or none, ` types itself.
+            if evt.ksym == SYM_GRAVE && !evt.has_modifiers() && !symbol_key {
+                momentary_english_mode = true;
             }
             // If shift is pressed, but we don't want to enter full shape symbols, or easy_symbol_input is not enabled
             if evt.is_state_on(KeyState::Shift)
@@ -762,6 +794,24 @@ impl Engine {
         // key repeat might not stop. So we always return `false` and handle keyup in
         // `on_test_keyup`.
         Ok(false)
+    }
+
+    /// The key opening the symbol table, in Chinese.
+    fn is_symbol_key(&self, evt: &KeyboardEvent) -> bool {
+        matches!(self.lang_mode.get(), TsfLangMode::Chinese)
+            && self.symbol_key.as_ref().is_some_and(|kb| kb.matches(evt))
+    }
+
+    /// Ctrl and a punctuation key, when it types the fullwidth symbol in
+    /// Chinese.
+    fn is_ctrl_symbol(&self, evt: &KeyboardEvent) -> bool {
+        self.cfg.chewing_tsf.ctrl_full_shape_symbols
+            && matches!(self.lang_mode.get(), TsfLangMode::Chinese)
+            && evt.is_state_on(KeyState::Control)
+            && !evt.is_state_on(KeyState::Shift)
+            && !evt.is_state_on(KeyState::Alt)
+            && evt.ksym.is_ascii()
+            && CTRL_SYMBOL_KEYS.contains(evt.ksym.to_unicode())
     }
 
     /// Shift+Space, when it switches between halfwidth and fullwidth.
@@ -1323,6 +1373,18 @@ impl Engine {
             .filter_map(|kb| Keybinding::try_from(kb).ok())
             .collect();
         self.keybindings = keybindings;
+        let cfg = &self.cfg.chewing_tsf;
+        self.symbol_key = cfg
+            .enable_symbol_key
+            .then(|| {
+                Keybinding::try_from(&KeybindValue {
+                    key: cfg.symbol_key.clone(),
+                    action: String::new(),
+                    param: String::new(),
+                })
+                .ok()
+            })
+            .flatten();
         Ok(())
     }
 

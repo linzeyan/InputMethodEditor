@@ -56,6 +56,9 @@ pub struct ChewingTsfConfig {
     pub enable_auto_learn: bool,
     pub esc_clean_all_buf: bool,
     pub full_shape_symbols: bool,
+    /// Ctrl and a punctuation key types its fullwidth symbol in Chinese:
+    /// Ctrl+, is ，.
+    pub ctrl_full_shape_symbols: bool,
     /// Shift+Space switches between halfwidth and fullwidth for every
     /// character; without it only Chinese punctuation is fullwidth.
     pub enable_fullwidth_toggle: bool,
@@ -65,6 +68,10 @@ pub struct ChewingTsfConfig {
     pub phrase_choice_rearward: bool,
     pub easy_symbols_with_shift: bool,
     pub easy_symbols_with_shift_ctrl: bool,
+    /// Whether a key opens the symbol table in Chinese, and which: a
+    /// keybinding's key, ` by default.
+    pub enable_symbol_key: bool,
+    pub symbol_key: String,
     pub cursor_cand_list: bool,
     pub sort_candidates_by_frequency: bool,
     pub show_cand_with_space_key: bool,
@@ -125,6 +132,7 @@ impl Default for ChewingTsfConfig {
             enable_auto_learn: true,
             esc_clean_all_buf: false,
             full_shape_symbols: true,
+            ctrl_full_shape_symbols: false,
             enable_fullwidth_toggle: false,
             show_fullwidth_notification: true,
             upper_case_with_shift: false,
@@ -132,6 +140,8 @@ impl Default for ChewingTsfConfig {
             phrase_choice_rearward: false,
             easy_symbols_with_shift: true,
             easy_symbols_with_shift_ctrl: false,
+            enable_symbol_key: true,
+            symbol_key: "`".to_owned(),
             cursor_cand_list: true,
             sort_candidates_by_frequency: false,
             show_cand_with_space_key: false,
@@ -332,6 +342,15 @@ impl Config {
             if let Ok(value) = reg_get_bool(&key, "FullShapeSymbols") {
                 cfg.full_shape_symbols = value;
             }
+            if let Ok(value) = reg_get_bool(&key, "CtrlFullShapeSymbols") {
+                cfg.ctrl_full_shape_symbols = value;
+            }
+            if let Ok(value) = reg_get_bool(&key, "EnableSymbolKey") {
+                cfg.enable_symbol_key = value;
+            }
+            if let Ok(value) = key.get_string("SymbolKey") {
+                cfg.symbol_key = value;
+            }
             if let Ok(value) = reg_get_bool(&key, "EnableFullwidthToggle") {
                 cfg.enable_fullwidth_toggle = value;
             }
@@ -490,6 +509,13 @@ impl Config {
             chewing_tsf.lock_chinese_on_caps_lock,
         );
         let _ = reg_set_bool(&key, "FullShapeSymbols", chewing_tsf.full_shape_symbols);
+        let _ = reg_set_bool(
+            &key,
+            "CtrlFullShapeSymbols",
+            chewing_tsf.ctrl_full_shape_symbols,
+        );
+        let _ = reg_set_bool(&key, "EnableSymbolKey", chewing_tsf.enable_symbol_key);
+        let _ = key.set_string("SymbolKey", &chewing_tsf.symbol_key);
         let _ = reg_set_bool(
             &key,
             "EnableFullwidthToggle",

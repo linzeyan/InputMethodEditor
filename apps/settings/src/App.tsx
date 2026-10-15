@@ -8,6 +8,7 @@ import {
   TabList,
   Tab,
   Checkbox,
+  Divider,
   Field,
   Dropdown,
   Option,
@@ -388,7 +389,9 @@ function App() {
       )}
       {selectedTab === "4" && config && (
         <Symbols
+          config={config}
           styles={styles}
+          setConfig={setConfig}
           symbols_dat={symbols_dat}
           setSymbolsDat={setSymbolsDat}
         />
@@ -429,6 +432,13 @@ function App() {
   );
 }
 
+// A section of a tab, for switches that touch the same keys or feature.
+const Group = ({ title }: { title: string }) => (
+  <Divider alignContent="start" style={{ flexGrow: 0, margin: "12px 0px 4px" }}>
+    {title}
+  </Divider>
+);
+
 const InputBehaviors = ({
   config,
   styles,
@@ -436,304 +446,140 @@ const InputBehaviors = ({
   setShowAdvanced,
   setConfig,
   setBooleanConfig,
-}) => (
-  <div
-    className={styles.content}
-    role="tabpanel"
-    aria-labelledby="InputBehaviors"
-  >
-    <div className={styles.column}>
-      <Tooltip
-        content="單獨按一下 Shift（不和其他鍵一起按）就切換中文／英文；按住超過「進階設定」的長壓時間則不切換。使用 CapsLock 切換時停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用 Shift 快速切換中英文"
-            name="switch_lang_with_shift"
-            disabled={config?.enable_caps_lock}
-            checked={config?.switch_lang_with_shift}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="改用 CapsLock 切換中文／英文：中英由 CapsLock 燈號決定，亮燈是哪一種在「進階設定」調整。勾選後「使用 Shift 快速切換中英文」與「預設以英文模式啟動」停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用 CapsLock 快速切換中英文"
-            name="enable_caps_lock"
-            checked={config?.enable_caps_lock}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="切換中文／英文、正體／簡體、注音／拼音時，短暫顯示一個小視窗告訴你現在的模式。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="顯示中/英切換通知訊息"
-            name="show_notification"
-            checked={config?.show_notification}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="組字中按 Esc 清掉所有還沒送出的字。不勾選時，Esc 只清掉正在打的注音或拼音，已轉好的字保留。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用 Esc 清空編輯區字串"
-            name="esc_clean_all_buf"
-            checked={config?.esc_clean_all_buf}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="中文模式下 Shift＋標點鍵打出全形符號，例如 Shift＋1 是「！」；不勾選則是半形「!」。勾選「按住 Shift 輸入快捷符號」時一律是全形，這項停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用 Shift 輸入全形標點符號"
-            name="full_shape_symbols"
-            disabled={config?.easy_symbols_with_shift}
-            checked={config?.full_shape_symbols}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="按 Shift＋空白鍵在半形與全形之間切換，一開始是半形。全形時英文字母、數字、符號和空白都打成全形，例如 ＡＢＣ１２３，中文、英文模式都是。不勾選時不能切換，只有中文模式的標點是全形（，。？）。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用 Shift + 空白鍵切換全形／半形"
-            name="enable_fullwidth_toggle"
-            checked={config?.enable_fullwidth_toggle}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="按 Shift＋空白鍵切換時，短暫顯示「全形」或「半形」。需先勾選「使用 Shift + 空白鍵切換全形／半形」。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="顯示全形／半形切換通知訊息"
-            name="show_fullwidth_notification"
-            disabled={!config?.enable_fullwidth_toggle}
-            checked={config?.show_fullwidth_notification}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="中文模式下 Shift＋字母打出英文字母：勾選是大寫（A），不勾選是小寫（a）。勾選「按住 Shift 輸入快捷符號」時 Shift＋字母打的是快捷符號，這項停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="按住 Shift 輸入大寫英文字母"
-            name="upper_case_with_shift"
-            disabled={config?.easy_symbols_with_shift}
-            checked={config?.upper_case_with_shift}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="組字中按 Ctrl＋2～9，把游標前面的 2～9 個字加入使用者詞庫，之後就能整個詞一起打出來；不勾選則是游標後面的字。例如打完「新酷音輸入法」按 Ctrl＋3，加入「輸入法」。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="Ctrl + 數字儲存游標前方的詞"
-            name="add_phrase_forward"
-            checked={config?.add_phrase_forward}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="組字中按 ↓ 選字時，改的是游標哪一邊的詞。不勾選（微軟新注音的方式）：游標後面的詞，游標在最後時是最後一個字，選字時游標移到詞的前面。勾選（macOS 注音的方式）：游標前面、到游標為止的詞，游標一直留在詞的後面。例如打完「我覺得」直接按 ↓，不勾選列出「得、德…」，勾選列出「覺得」；按一次 ← 再按 ↓，不勾選改「得」，勾選改「覺」。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="游標在詞的後面選字（macOS 方式）"
-            name="phrase_choice_rearward"
-            checked={config?.phrase_choice_rearward}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="中文模式下 Shift＋字母打出「快捷符號」頁設定的符號，例如 Shift＋A 是「【」。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="按住 Shift 輸入快捷符號"
-            name="easy_symbols_with_shift"
-            checked={config?.easy_symbols_with_shift}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="中文模式下 Ctrl＋Shift＋字母打出「快捷符號」頁設定的符號。只勾這一項時，Shift＋字母仍然打英文字母。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="按住 Shift + Ctrl 輸入快捷符號"
-            name="easy_symbols_with_shift_ctrl"
-            checked={config?.easy_symbols_with_shift_ctrl}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="送出文字時記住你打過的詞和選過的字，之後整句轉換會優先用它們。關閉後不再學習，已學到的保留，可在「編輯使用者詞庫」管理。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="自動學習常用詞與新詞"
-            name="enable_auto_learn"
-            checked={config?.enable_auto_learn}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="按 ↓ 叫出的候選依常用程度排序（字典的統計加上你的使用習慣），常用的在前面；不勾選時依字典的固定順序。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="依照常用程度排序手動選字選單"
-            name="sort_candidates_by_frequency"
-            checked={config?.sort_candidates_by_frequency}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-    </div>
-    <div className={styles.column}>
-      <Tooltip
-        content="選字視窗出現時，用方向鍵移動反白、按 Enter 選取；Ctrl＋Delete 忘記詞也需要這一項，作用在反白的那一個。不勾選時用選字鍵選字。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="使用方向鍵移動游標選字"
-            name="cursor_cand_list"
-            checked={config?.cursor_cand_list}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="注音組字中，打完一個字後按空白鍵叫出選字視窗，和 ↓ 相同。不勾選時，空白鍵把游標前的字改成一聲，連按兩下才打出空白。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="按空白鍵叫出選字視窗"
-            name="show_cand_with_space_key"
-            checked={config?.show_cand_with_space_key}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="按 ↓ 選好一個詞後，游標自動移到它後面，可以接著選下一段；不勾選時游標留在原處。勾選「游標在詞的後面選字」時游標本來就在詞後面，這項停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="選字完畢自動跳到下一個字"
-            name="advance_after_selection"
-            disabled={config?.phrase_choice_rearward}
-            checked={config?.advance_after_selection}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="每個程式會記住上次切到的中文或英文，下次開啟時沿用；這項決定還沒切換過的程式從哪個模式開始。「各程式」頁列出的程式照那裡的設定。使用 CapsLock 切換中英文時由燈號決定，這項停用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="預設以英文模式啟動"
-            name="default_english"
-            disabled={config?.enable_caps_lock}
-            checked={config?.default_english}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="把打出的字轉成簡體字形，例如 軟體→软体。隨時可用 Ctrl＋F12 或右鍵選單切換，所有程式共用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="預設輸出簡體中文（或使用 Ctrl + F12 切換）"
-            name="output_simp_chinese"
-            checked={config?.output_simp_chinese}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="簡體輸出時連用語一起換成大陸說法，例如 軟體→软件、網際網路→互联网；不勾選只轉字形。需先勾選簡體輸出。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="簡體改用大陸用語，如 軟體→软件"
-            name="output_simp_vocabulary"
-            disabled={!config?.output_simp_chinese}
-            checked={config?.output_simp_vocabulary}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <Tooltip
-        content="改用漢語拼音輸入：直接連打、不用聲調，例如 nihao 是「你好」。模糊音與雙拼在「拼音」頁設定。隨時可用 Ctrl＋F11 切換，所有程式共用。"
-        relationship="description"
-      >
-        <div className={styles.hint}>
-          <Checkbox
-            label="以漢語拼音輸入（或使用 Ctrl + F11 切換）"
-            name="pinyin"
-            checked={config?.pinyin}
-            onChange={setBooleanConfig}
-          />
-        </div>
-      </Tooltip>
-      <div style={{ marginLeft: "10px", marginTop: "10px" }}>
+}) => {
+  const check = (name: string, label: string, hint: string, disabled = false) => (
+    <Tooltip content={hint} relationship="description">
+      <div className={styles.hint}>
+        <Checkbox
+          label={label}
+          name={name}
+          disabled={disabled}
+          checked={config[name]}
+          onChange={setBooleanConfig}
+        />
+      </div>
+    </Tooltip>
+  );
+  return (
+    <div
+      className={styles.content}
+      role="tabpanel"
+      aria-labelledby="InputBehaviors"
+    >
+      <div className={styles.column}>
+        <Group title="中英切換" />
+        {check(
+          "switch_lang_with_shift",
+          "使用 Shift 快速切換中英文",
+          "單獨按一下 Shift（不和其他鍵一起按）就切換中文／英文；按住超過「進階設定」的長壓時間則不切換。使用 CapsLock 切換時停用。",
+          config.enable_caps_lock,
+        )}
+        {check(
+          "enable_caps_lock",
+          "使用 CapsLock 快速切換中英文",
+          "改用 CapsLock 切換中文／英文：中英由 CapsLock 燈號決定，亮燈是哪一種在「進階設定」調整。勾選後「使用 Shift 快速切換中英文」與「預設以英文模式啟動」停用。",
+        )}
+        {check(
+          "default_english",
+          "預設以英文模式啟動",
+          "每個程式會記住上次切到的中文或英文，下次開啟時沿用；這項決定還沒切換過的程式從哪個模式開始。「各程式」頁列出的程式照那裡的設定。使用 CapsLock 切換中英文時由燈號決定，這項停用。",
+          config.enable_caps_lock,
+        )}
+        {check(
+          "show_notification",
+          "顯示中/英切換通知訊息",
+          "切換中文／英文、正體／簡體、注音／拼音時，短暫顯示一個小視窗告訴你現在的模式。",
+        )}
+        <details
+          open={showAdvanced}
+          onToggle={(ev) => setShowAdvanced(ev.currentTarget.open)}
+        >
+          <summary style={{ margin: "4px 0px 10px", cursor: "pointer" }}>
+            進階設定...
+          </summary>
+          <Tooltip
+            content="單獨按住 Shift 超過這個時間才放開，視為長壓，不切換中英文。"
+            relationship="description"
+          >
+            <Field
+              label={`Shift 長壓敏感度：${config.shift_key_sensitivity || 200} ms`}
+            >
+              <Slider
+                value={config.shift_key_sensitivity || 200}
+                min={100}
+                max={1000}
+                step={100}
+                onChange={(_ev, data) => {
+                  setConfig({
+                    ...config,
+                    shift_key_sensitivity: data.value,
+                  } as ChewingTsfConfig);
+                }}
+              />
+            </Field>
+          </Tooltip>
+          {check(
+            "lock_chinese_on_caps_lock",
+            "CapsLock 亮燈鎖定中文",
+            "勾選時 CapsLock 亮燈是中文、熄燈是英文；不勾選則相反。亮燈鎖定中文與各種軟體的相容性較好。需先勾選「使用 CapsLock 快速切換中英文」。",
+            !config.enable_caps_lock,
+          )}
+          {check(
+            "sync_lang_mode_openclose",
+            "設定英文模式等於關閉鍵盤",
+            "切到英文模式時，也把 Windows 的輸入法開關設為關閉，和按 Ctrl＋Space 關閉輸入法相同。只有依這個開關判斷輸入法狀態的程式才需要，一般不用勾選。",
+          )}
+        </details>
+        <Group title="標點與符號（中文模式）" />
+        {check(
+          "full_shape_symbols",
+          "使用 Shift 輸入全形標點符號",
+          "Shift＋標點鍵打出全形符號，例如 Shift＋1 是「！」；不勾選則是半形「!」。勾選「按住 Shift 輸入快捷符號」時一律是全形，這項停用。",
+          config.easy_symbols_with_shift,
+        )}
+        {check(
+          "ctrl_full_shape_symbols",
+          "使用 Ctrl 輸入全形標點符號",
+          "不用按 Shift，Ctrl＋標點鍵打出全形標點：Ctrl＋, 是，、Ctrl＋. 是。、Ctrl＋/ 是／、Ctrl＋; 是；、Ctrl＋' 是、、Ctrl＋[ 與 ] 是「 與 」。勾選後中文模式下這些組合不再交給程式，例如 VS Code 的 Ctrl＋/（註解）與 Ctrl＋,（設定）、終端機的 Ctrl＋[（Esc），要用時切到英文模式。和 Ctrl＋數字（加詞）、Ctrl＋Shift＋字母（快捷符號）不衝突；「自訂快捷鍵」用到同一個組合時以快捷鍵為準。",
+        )}
+        {check(
+          "upper_case_with_shift",
+          "按住 Shift 輸入大寫英文字母",
+          "Shift＋字母打出英文字母：勾選是大寫（A），不勾選是小寫（a）。勾選「按住 Shift 輸入快捷符號」時 Shift＋字母打的是快捷符號，這項停用。",
+          config.easy_symbols_with_shift,
+        )}
+        {check(
+          "easy_symbols_with_shift",
+          "按住 Shift 輸入快捷符號",
+          "Shift＋字母打出「快捷符號」頁設定的符號，例如 Shift＋A 是「【」。勾選後 Shift＋字母不再打英文字母，標點一律全形。",
+        )}
+        {check(
+          "easy_symbols_with_shift_ctrl",
+          "按住 Shift + Ctrl 輸入快捷符號",
+          "Ctrl＋Shift＋字母打出「快捷符號」頁設定的符號。只勾這一項時，Shift＋字母仍然打英文字母。",
+        )}
+        {check(
+          "enable_fullwidth_toggle",
+          "使用 Shift + 空白鍵切換全形／半形",
+          "按 Shift＋空白鍵在半形與全形之間切換，一開始是半形。全形時英文字母、數字、符號和空白都打成全形，例如 ＡＢＣ１２３，中文、英文模式都是。不勾選時不能切換，只有中文模式的標點是全形（，。？）。",
+        )}
+        {check(
+          "show_fullwidth_notification",
+          "顯示全形／半形切換通知訊息",
+          "按 Shift＋空白鍵切換時，短暫顯示「全形」或「半形」。需先勾選「使用 Shift + 空白鍵切換全形／半形」。",
+          !config.enable_fullwidth_toggle,
+        )}
+      </div>
+      <div className={styles.column}>
+        <Group title="選字" />
         <Tooltip
           content="選字視窗裡第 1、2、3… 個候選用哪些鍵選取。選 asdf 開頭的組合，手不用離開主鍵區。"
           relationship="description"
         >
-          <Field label="選字鍵：">
+          <Field label="選字鍵：" orientation="horizontal">
             <Dropdown
-              value={sel_key_type_to_value(config?.sel_key_type)}
-              selectedOptions={[config?.sel_key_type.toString() || ""]}
+              value={sel_key_type_to_value(config.sel_key_type)}
+              selectedOptions={[config.sel_key_type.toString()]}
               onOptionSelect={(_ev, data) => {
                 setConfig({
                   ...config,
@@ -750,14 +596,41 @@ const InputBehaviors = ({
             </Dropdown>
           </Field>
         </Tooltip>
+        {check(
+          "cursor_cand_list",
+          "使用方向鍵移動游標選字",
+          "選字視窗出現時，用方向鍵移動反白、按 Enter 選取；Ctrl＋Delete 忘記詞也需要這一項，作用在反白的那一個。不勾選時用選字鍵選字。",
+        )}
+        {check(
+          "show_cand_with_space_key",
+          "按空白鍵叫出選字視窗",
+          "注音組字中，打完一個字後按空白鍵叫出選字視窗，和 ↓ 相同。不勾選時，空白鍵把游標前的字改成一聲，連按兩下才打出空白。",
+        )}
+        {check(
+          "phrase_choice_rearward",
+          "游標在詞的後面選字（macOS 方式）",
+          "組字中按 ↓ 選字時，改的是游標哪一邊的詞。不勾選（微軟新注音的方式）：游標後面的詞，游標在最後時是最後一個字，選字時游標移到詞的前面。勾選（macOS 注音的方式）：游標前面、到游標為止的詞，游標一直留在詞的後面。例如打完「我覺得」直接按 ↓，不勾選列出「得、德…」，勾選列出「覺得」；按一次 ← 再按 ↓，不勾選改「得」，勾選改「覺」。",
+        )}
+        {check(
+          "advance_after_selection",
+          "選字完畢自動跳到下一個字",
+          "按 ↓ 選好一個詞後，游標自動移到它後面，可以接著選下一段；不勾選時游標留在原處。勾選「游標在詞的後面選字」時游標本來就在詞後面，這項停用。",
+          config.phrase_choice_rearward,
+        )}
+        {check(
+          "sort_candidates_by_frequency",
+          "依照常用程度排序手動選字選單",
+          "按 ↓ 叫出的候選依常用程度排序（字典的統計加上你的使用習慣），常用的在前面；不勾選時依字典的固定順序。",
+        )}
+        <Group title="組字與學習" />
         <Tooltip
           content="注音怎麼轉成中文（拼音一律可省略聲調）。每個字打聲調：依整句自動挑字，一聲按空白。可省略聲調：ㄋㄧㄏㄠ 就是「你好」，只打聲母也行，ㄐㄊㄊㄑㄏㄏ 是「今天天氣很好」，最後一個字按空白、Enter 或標點結束；ˊˇˋ˙ 照樣有效，但空白不再限定一聲，例如 ㄉㄠ 加空白可能是「到」而不是「刀」。逐字選字：每打完一個字就跳出候選，不做整句轉換。"
           relationship="description"
         >
-          <Field label="注音模式：">
+          <Field label="注音模式：" orientation="horizontal">
             <Dropdown
-              value={conv_engine_to_value(config?.conv_engine)}
-              selectedOptions={[config?.conv_engine.toString() || ""]}
+              value={conv_engine_to_value(config.conv_engine)}
+              selectedOptions={[config.conv_engine.toString()]}
               onOptionSelect={(_ev, data) => {
                 setConfig({
                   ...config,
@@ -771,66 +644,42 @@ const InputBehaviors = ({
             </Dropdown>
           </Field>
         </Tooltip>
-        <details
-          open={showAdvanced}
-          onToggle={(ev) => setShowAdvanced(ev.currentTarget.open)}
-        >
-          <summary style={{ marginBottom: "10px", cursor: "pointer" }}>
-            進階設定...
-          </summary>
-          <Tooltip
-            content="單獨按住 Shift 超過這個時間才放開，視為長壓，不切換中英文。"
-            relationship="description"
-          >
-            <Field
-              label={`Shift 長壓敏感度：${config?.shift_key_sensitivity || 200} ms`}
-            >
-              <Slider
-                value={config?.shift_key_sensitivity || 200}
-                min={100}
-                max={1000}
-                step={100}
-                onChange={(_ev, data) => {
-                  setConfig({
-                    ...config,
-                    shift_key_sensitivity: data.value,
-                  } as ChewingTsfConfig);
-                }}
-              />
-            </Field>
-          </Tooltip>
-          <Tooltip
-            content="勾選時 CapsLock 亮燈是中文、熄燈是英文；不勾選則相反。亮燈鎖定中文與各種軟體的相容性較好。需先勾選「使用 CapsLock 快速切換中英文」。"
-            relationship="description"
-          >
-            <div className={styles.hint}>
-              <Checkbox
-                label="CapsLock 亮燈鎖定中文"
-                disabled={!config?.enable_caps_lock}
-                name="lock_chinese_on_caps_lock"
-                checked={config?.lock_chinese_on_caps_lock}
-                onChange={setBooleanConfig}
-              />
-            </div>
-          </Tooltip>
-          <Tooltip
-            content="切到英文模式時，也把 Windows 的輸入法開關設為關閉，和按 Ctrl＋Space 關閉輸入法相同。只有依這個開關判斷輸入法狀態的程式才需要，一般不用勾選。"
-            relationship="description"
-          >
-            <div className={styles.hint}>
-              <Checkbox
-                label="設定英文模式等於關閉鍵盤"
-                name="sync_lang_mode_openclose"
-                checked={config?.sync_lang_mode_openclose}
-                onChange={setBooleanConfig}
-              />
-            </div>
-          </Tooltip>
-        </details>
+        {check(
+          "pinyin",
+          "以漢語拼音輸入（或使用 Ctrl + F11 切換）",
+          "改用漢語拼音輸入：直接連打、不用聲調，例如 nihao 是「你好」。模糊音與雙拼在「拼音」頁設定。隨時可用 Ctrl＋F11 切換，所有程式共用。",
+        )}
+        {check(
+          "esc_clean_all_buf",
+          "使用 Esc 清空編輯區字串",
+          "組字中按 Esc 清掉所有還沒送出的字。不勾選時，Esc 只清掉正在打的注音或拼音，已轉好的字保留。",
+        )}
+        {check(
+          "add_phrase_forward",
+          "Ctrl + 數字儲存游標前方的詞",
+          "組字中按 Ctrl＋2～9，把游標前面的 2～9 個字加入使用者詞庫，之後就能整個詞一起打出來；不勾選則是游標後面的字。例如打完「新酷音輸入法」按 Ctrl＋3，加入「輸入法」。",
+        )}
+        {check(
+          "enable_auto_learn",
+          "自動學習常用詞與新詞",
+          "送出文字時記住你打過的詞和選過的字，之後整句轉換會優先用它們。關閉後不再學習，已學到的保留，可在「編輯使用者詞庫」管理。",
+        )}
+        <Group title="簡體輸出" />
+        {check(
+          "output_simp_chinese",
+          "預設輸出簡體中文（或使用 Ctrl + F12 切換）",
+          "把打出的字轉成簡體字形，例如 軟體→软体。隨時可用 Ctrl＋F12 或右鍵選單切換，所有程式共用。",
+        )}
+        {check(
+          "output_simp_vocabulary",
+          "簡體改用大陸用語，如 軟體→软件",
+          "簡體輸出時連用語一起換成大陸說法，例如 軟體→软件、網際網路→互联网；不勾選只轉字形。需先勾選簡體輸出。",
+          !config.output_simp_chinese,
+        )}
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 const Appearance = ({
   config,
@@ -1462,13 +1311,43 @@ const Apps = ({ config, styles, setConfig }) => {
   );
 };
 
-const Symbols = ({ styles, symbols_dat, setSymbolsDat }) => (
+const Symbols = ({ config, styles, setConfig, symbols_dat, setSymbolsDat }) => (
   <div className={styles.content} role="tabpanel" aria-labelledby="Symbols">
     <div className={styles.column}>
-      <Field label="輸入中文時，按下 ` 鍵，會顯示下列的符號表：">
+      <Tooltip
+        content="勾選時，中文模式下按這個鍵叫出下面的符號表。不勾選，或換成別的鍵時，` 照常打出 `（寫 Markdown 常用）。按鍵的寫法同「自訂快捷鍵」，例如 `、Ctrl+`、F2；寫錯的話不會開啟符號表。"
+        relationship="description"
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            marginBottom: "12px",
+          }}
+        >
+          <Checkbox
+            label="中文模式下按這個鍵開啟符號表："
+            checked={config.enable_symbol_key}
+            onChange={(_ev, data) =>
+              setConfig({ ...config, enable_symbol_key: !!data.checked })
+            }
+          />
+          <Input
+            value={config.symbol_key}
+            disabled={!config.enable_symbol_key}
+            style={{ width: "10em" }}
+            onChange={(_ev, data) =>
+              setConfig({ ...config, symbol_key: data.value })
+            }
+          />
+        </div>
+      </Tooltip>
+      <Field label="符號表：">
         <Textarea
           value={symbols_dat}
           className={styles.textarea}
+          style={{ height: "52vh" }}
           textarea={{ className: styles.texarea_inner }}
           onChange={(_ev, data) => setSymbolsDat(data.value)}
         />

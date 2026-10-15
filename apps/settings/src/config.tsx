@@ -11,6 +11,7 @@ export type ChewingTsfConfig = {
   enable_auto_learn: boolean;
   esc_clean_all_buf: boolean;
   full_shape_symbols: boolean;
+  ctrl_full_shape_symbols: boolean;
   enable_fullwidth_toggle: boolean;
   show_fullwidth_notification: boolean;
   upper_case_with_shift: boolean;
@@ -18,6 +19,8 @@ export type ChewingTsfConfig = {
   phrase_choice_rearward: boolean;
   easy_symbols_with_shift: boolean;
   easy_symbols_with_shift_ctrl: boolean;
+  enable_symbol_key: boolean;
+  symbol_key: string;
   cursor_cand_list: boolean;
   sort_candidates_by_frequency: boolean;
   show_cand_with_space_key: boolean;
