@@ -18,7 +18,9 @@ use chewing_tip_core::config::Config;
 use chewing_tip_core::shell::user_dir;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use windows::Win32::Foundation::{CloseHandle, ERROR_CANCELLED};
+use windows::Win32::Foundation::{
+    CloseHandle, ERROR_ALREADY_EXISTS, ERROR_CANCELLED, GetLastError, HANDLE,
+};
 use windows::Win32::Globalization::{CP_ACP, MULTI_BYTE_TO_WIDE_CHAR_FLAGS, MultiByteToWideChar};
 use windows::Win32::System::RemoteDesktop::{
     WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION, WTSFreeMemory, WTSINFOW,
@@ -26,7 +28,8 @@ use windows::Win32::System::RemoteDesktop::{
 };
 use windows::Win32::System::SystemInformation::{GetLocalTime, GetTickCount};
 use windows::Win32::System::Threading::{
-    AttachThreadInput, GetCurrentThreadId, GetExitCodeProcess, INFINITE, WaitForSingleObject,
+    AttachThreadInput, CreateMutexW, GetCurrentThreadId, GetExitCodeProcess, INFINITE,
+    WaitForSingleObject,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 use windows::Win32::UI::Shell::{SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW, ShellExecuteExW};
@@ -35,7 +38,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW,
     SW_HIDE,
 };
-use windows::core::{HSTRING, PCWSTR, PWSTR, w};
+use windows::core::{HSTRING, Owned, PCWSTR, PWSTR, w};
 use windows_registry::CURRENT_USER;
 
 const LATEST_RELEASE: &str =
@@ -188,9 +191,23 @@ fn newer(latest: &str, current: &str) -> bool {
     matches!((parse(latest), parse(current)), (Some(l), Some(c)) if l > c)
 }
 
+/// One update at a time, until the handle is dropped: the scheduled check and
+/// 立即檢查更新 could both be answered yes, and the second download rewrote
+/// the package the first was installing from (1603), then found it still
+/// installing (1618).
+fn lock() -> Result<Owned<HANDLE>> {
+    let mutex = unsafe { Owned::new(CreateMutexW(None, false, w!("InputMethodEditor-update"))?) };
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        return Err("另一個更新正在進行".into());
+    }
+    Ok(mutex)
+}
+
 /// False if the UAC prompt was declined.
 fn install(asset: &Asset, version: &str) -> Result<bool> {
+    let _lock = lock()?;
     let path = env::temp_dir().join(format!("InputMethodEditor-{version}.msi"));
+    let log = env::temp_dir().join("InputMethodEditor-install.log");
     curl(&["-o", &path.to_string_lossy(), &asset.browser_download_url])?;
     let digest = format!("sha256:{:x}", Sha256::digest(fs::read(&path)?));
     if asset.digest.as_deref() != Some(digest.as_str()) {
@@ -202,14 +219,21 @@ fn install(asset: &Asset, version: &str) -> Result<bool> {
     // started afterwards load the new DLL) but can't ask for administrator
     // rights, so msiexec starts elevated and UAC is all that shows.
     // No restart: the old DLLs go at the next one.
-    let parameters = format!("/i \"{}\" /qn /norestart", path.display());
+    // The log is all there is to say why a silent install failed.
+    let parameters = format!(
+        "/i \"{}\" /qn /norestart /l*v \"{}\"",
+        path.display(),
+        log.display()
+    );
     let code = run_elevated("msiexec.exe", &parameters);
     let _ = fs::remove_file(&path);
     match code? {
         None => Ok(false),
         // 3010: installed, with the old DLLs left for the restart.
         Some(0 | 3010) => Ok(true),
-        Some(code) => Err(format!("安裝程式結束代碼 {code}").into()),
+        // Windows Update, or any other package, holds Windows Installer.
+        Some(1618) => Err("另一個安裝程式正在執行，請稍後再試".into()),
+        Some(code) => Err(format!("安裝程式結束代碼 {code}，記錄在 {}", log.display()).into()),
     }
 }
 
@@ -325,7 +349,19 @@ fn wait_until_idle() {
 
 #[cfg(test)]
 mod tests {
-    use super::{ansi, due, newer};
+    use super::{ansi, due, lock, newer};
+
+    #[test]
+    fn one_update_at_a_time_until_it_ends() {
+        let first = lock().expect("no update running");
+        // A second one, from the other window or the scheduled check, must
+        // not download over the package the first is installing.
+        assert!(lock().is_err());
+        // Ended, failed or not: the next one may go, or no update would ever
+        // run again while the settings stay open.
+        drop(first);
+        assert!(lock().is_ok());
+    }
 
     #[test]
     fn curl_errors_keep_the_windows_text() {

@@ -75,9 +75,17 @@
     <CustomAction Id="UnregisterTip" FileKey="tsfreg" ExeCommand="msi-unregister"
                   Execute="deferred" Impersonate="no" Return="ignore" />
     <InstallExecuteSequence>
+      <!-- Just after InstallInitialize (1500), inside the new version's
+           transaction, so a failed upgrade puts the old one back. MajorUpgrade
+           removes it before (1401), for good: a failure left no IME at all.
+           wixl 0.106 ignores MajorUpgrade's Schedule. -->
+      <RemoveExistingProducts Sequence="1501" />
       <!-- Numbers rather than Before/After, which wixl 0.106 mishandles:
            just before RemoveFiles (3500) and just after InstallFinalize (6600). -->
-      <Custom Action="UnregisterTip" Sequence="3499">REMOVE="ALL"</Custom>
+      <!-- Not when an upgrade removes this version: the new one registers the
+           same TIP again, and a rollback, which can't undo a custom action,
+           would bring back the files of a TIP no longer registered. -->
+      <Custom Action="UnregisterTip" Sequence="3499">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="RegisterTip" After="InstallFiles">NOT REMOVE</Custom>
       <Custom Action="RegisterTipForUser" Sequence="6601">NOT REMOVE</Custom>
     </InstallExecuteSequence>
