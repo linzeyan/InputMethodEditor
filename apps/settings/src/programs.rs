@@ -8,8 +8,6 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::{env, fs, ptr};
 
-use base64::prelude::{BASE64_STANDARD, Engine as _};
-use serde::Serialize;
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM, MAX_PATH};
 use windows::Win32::Graphics::Dwm::{DWMWA_CLOAKED, DwmGetWindowAttribute};
 use windows::Win32::Graphics::Gdi::{
@@ -35,29 +33,22 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{BOOL, HSTRING, Interface, PWSTR};
 
-#[derive(Serialize)]
-pub struct Program {
+pub(crate) struct Program {
     /// As the Start menu shows it, or else the executable's file name.
-    name: String,
+    pub(crate) name: String,
     /// What the IME matches the program by.
-    exe: String,
-    /// A PNG data URL.
-    icon: Option<String>,
+    pub(crate) exe: String,
+    /// Width, height and RGBA rows, top first.
+    pub(crate) icon: Option<(u32, u32, Vec<u8>)>,
 }
 
 /// A program by its name, its executable and the file whose icon it shows:
 /// the shortcut, which may pick another than the executable's.
 type Found = (String, PathBuf, PathBuf);
 
-#[tauri::command]
-pub async fn list_programs() -> Result<Vec<Program>, String> {
-    tauri::async_runtime::spawn_blocking(programs)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-fn programs() -> Vec<Program> {
-    // A pool thread, perhaps initialized by an earlier call: fine either way.
+/// Slow, with a shortcut and an icon to read for each: off the UI thread.
+pub(crate) fn programs() -> Vec<Program> {
+    // A thread of its own, which COM is started on once.
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let mut found = vec![];
     for root in [env::var_os("ProgramData"), env::var_os("APPDATA")]
@@ -216,9 +207,9 @@ fn image_path(pid: u32) -> Option<PathBuf> {
 }
 
 /// The icon Explorer shows for `path`, without a shortcut's arrow.
-fn icon(path: &Path) -> Option<String> {
+fn icon(path: &Path) -> Option<(u32, u32, Vec<u8>)> {
     let mut info = SHFILEINFOW::default();
-    let (width, height, rgba) = unsafe {
+    unsafe {
         SHGetFileInfoW(
             &HSTRING::from(path.as_os_str()),
             FILE_FLAGS_AND_ATTRIBUTES(0),
@@ -231,19 +222,8 @@ fn icon(path: &Path) -> Option<String> {
         }
         let rgba = icon_rgba(info.hIcon);
         let _ = DestroyIcon(info.hIcon);
-        rgba?
-    };
-    let mut png = vec![];
-    {
-        let mut encoder = png::Encoder::new(&mut png, width, height);
-        encoder.set_color(png::ColorType::Rgba);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.write_header().ok()?.write_image_data(&rgba).ok()?;
+        rgba
     }
-    Some(format!(
-        "data:image/png;base64,{}",
-        BASE64_STANDARD.encode(png)
-    ))
 }
 
 /// Width, height and RGBA rows, top first.

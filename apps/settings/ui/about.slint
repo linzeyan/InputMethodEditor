@@ -1,0 +1,83 @@
+// SPDX-FileCopyrightText: 2025-2026 Chewing Project Authors
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { Button, Palette } from "std-widgets.slint";
+
+component Paragraph inherits StyledText {
+    default-color: Palette.foreground;
+    link-color: Palette.color-scheme == ColorScheme.dark ? #60cdff : #005fb8;
+}
+
+export component AboutWindow inherits Window {
+    in property <string> version;
+    in property <ColorScheme> scheme;
+    changed scheme => {
+        Palette.color-scheme = root.scheme;
+    }
+    callback open-url(string);
+    callback ok();
+
+    title: "關於 InputMethodEditor";
+    // Fixed, as a dialog: Slint gives a resizable window its maximize
+    // button back.
+    width: 430px;
+    height: 400px;
+    background: Palette.background;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 16px;
+        HorizontalLayout {
+            spacing: 16px;
+            alignment: start;
+            Image {
+                source: @image-url("logo.svg");
+                width: 120px;
+                height: 120px;
+            }
+
+            VerticalLayout {
+                alignment: start;
+                spacing: 4px;
+                Paragraph {
+                    text: @markdown("InputMethodEditor");
+                }
+
+                Paragraph {
+                    text: @markdown("版本：\{root.version}");
+                }
+
+                Paragraph {
+                    text: @markdown("授權方式：GPL-3.0-or-later");
+                }
+
+                Paragraph {
+                    text: @markdown("專案首頁：[GitHub](https://github.com/linzeyan/InputMethodEditor)");
+                    link-clicked(url) => {
+                        root.open-url(url);
+                    }
+                }
+            }
+        }
+
+        Paragraph {
+            text: @markdown("核心是新酷音（libchewing）。這個設定程式改自 windows-chewing-preferences，原作者為新酷音開發團隊（Chewing Project Authors），詳見 [https://chewing.im](https://chewing.im)。");
+            link-clicked(url) => {
+                root.open-url(url);
+            }
+        }
+
+        Rectangle { }
+
+        HorizontalLayout {
+            alignment: end;
+            Button {
+                text: "確定";
+                clicked => {
+                    root.ok();
+                }
+            }
+        }
+    }
+}

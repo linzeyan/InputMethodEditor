@@ -52,14 +52,14 @@ struct Release {
 }
 
 #[derive(Deserialize)]
-struct Asset {
+pub(crate) struct Asset {
     name: String,
     browser_download_url: String,
     /// `sha256:<hex>`, which GitHub computes on upload.
     digest: Option<String>,
 }
 
-pub fn check_update() {
+pub(crate) fn check_update() {
     // Nobody is there to read why a lookup failed but the log; the next run
     // tries again.
     if let Err(error) = check() {
@@ -129,31 +129,16 @@ fn trace(text: &str) {
     }
 }
 
-/// 立即檢查更新 in the settings: the newer version, if any. Asked to, it
-/// looks even with automatic checks off.
-#[tauri::command]
-pub async fn find_update() -> std::result::Result<Option<String>, String> {
-    blocking(|| Ok(find()?.map(|(version, _)| version))).await
+/// 立即檢查更新 in the settings: the newer version and its package, if any.
+/// Asked to, it looks even with automatic checks off. Blocks on the network.
+pub(crate) fn find_update() -> std::result::Result<Option<(String, Asset)>, String> {
+    find().map_err(|error| error.to_string())
 }
 
 /// Installs the newer version, as the scheduled check does; false if the
-/// UAC prompt was declined.
-#[tauri::command]
-pub async fn install_update() -> std::result::Result<bool, String> {
-    blocking(|| match find()? {
-        Some((version, asset)) => install(&asset, &version),
-        None => Err("找不到新版本".into()),
-    })
-    .await
-}
-
-/// Off the async runtime: the download can take minutes.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> Result<T> + Send + 'static,
-) -> std::result::Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || work().map_err(|error| error.to_string()))
-        .await
-        .map_err(|error| error.to_string())?
+/// UAC prompt was declined. Blocks for the download, which can take minutes.
+pub(crate) fn install_update(asset: &Asset, version: &str) -> std::result::Result<bool, String> {
+    install(asset, version).map_err(|error| error.to_string())
 }
 
 /// The latest release's version and package, if it is newer than this one.

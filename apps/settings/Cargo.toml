@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: 2025-2026 Chewing Project Authors
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+[package]
+name = "ime-settings"
+version.workspace = true
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[[bin]]
+name = "InputMethodEditorSettings"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+chewing.workspace = true
+chewing_tip_core = { path = "../../crates/chewing_tip_core" }
+log.workspace = true
+# Its Windows part is the system's file dialog, on windows-sys alone.
+rfd = { version = "0.16", default-features = false, features = ["common-controls-v6"] }
+scoped-error.workspace = true
+serde.workspace = true
+serde_json = "1"
+sha2 = "0.10.9"
+# The winit hook sets a dark title bar before the window is made.
+slint = { version = "1.18", default-features = false, features = [
+  "std",
+  "compat-1-2",
+  "accessibility",
+  "backend-winit",
+  "raw-window-handle-06",
+  "renderer-software",
+  "unstable-winit-030",
+] }
+toml = "0.9.5"
+windows-registry = "0.6.1"
+windows = { version = "0.62", features = [
+  "Win32_Graphics_DirectWrite",
+  "Win32_Graphics_Dwm",
+  "Win32_Globalization",
+  "Win32_Graphics_Gdi",
+  "Win32_Storage_FileSystem",
+  "Win32_System_Com",
+  "Win32_System_RemoteDesktop",
+  "Win32_System_SystemInformation",
+  "Win32_System_Threading",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[build-dependencies]
+embed-resource.workspace = true
+slint-build = "1.18"

@@ -1,0 +1,250 @@
+// SPDX-FileCopyrightText: 2025-2026 Chewing Project Authors
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { Button, LineEdit, Palette, SpinBox, StandardTableView } from "std-widgets.slint";
+
+component Label inherits Text {
+    color: Palette.foreground;
+}
+
+// The user dictionary: the list on the left, the selected word on the right.
+export component DictionaryWindow inherits Window {
+    in property <string> version;
+    in property <ColorScheme> scheme;
+    changed scheme => {
+        Palette.color-scheme = root.scheme;
+    }
+
+    in property <[[StandardListViewItem]]> rows;
+    in-out property <int> current-row: -1;
+    in-out property <string> query;
+    // A word is selected, which the right side edits.
+    in property <bool> editing;
+    in-out property <string> word;
+    in-out property <string> bopomofo;
+    in-out property <int> boost;
+    // Shown for a moment after saving, importing or exporting.
+    in property <string> toast;
+
+    callback insert();
+    callback remove();
+    callback save();
+    callback search(string);
+    callback pick(int);
+    callback sort(int, bool);
+    // Keys typed as on the standard layout, as bopomofo.
+    callback map-bopomofo(string) -> string;
+    callback apply();
+    callback import();
+    callback export();
+    callback about();
+
+    title: "InputMethodEditor 使用者詞庫 (" + root.version + ")";
+    preferred-width: 930px;
+    preferred-height: 600px;
+    background: Palette.background;
+
+    MenuBar {
+        Menu {
+            title: "檔案";
+            MenuItem {
+                title: "匯入詞庫...";
+                activated => {
+                    root.import();
+                }
+            }
+
+            MenuItem {
+                title: "匯出詞庫...";
+                activated => {
+                    root.export();
+                }
+            }
+        }
+
+        Menu {
+            title: "關於";
+            MenuItem {
+                title: "關於 InputMethodEditor";
+                activated => {
+                    root.about();
+                }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        padding: 10px;
+        spacing: 10px;
+        VerticalLayout {
+            horizontal-stretch: 1;
+            spacing: 10px;
+            HorizontalLayout {
+                alignment: start;
+                spacing: 5px;
+                Button {
+                    text: "新增";
+                    clicked => {
+                        root.insert();
+                    }
+                }
+
+                Button {
+                    text: "刪除";
+                    enabled: root.editing;
+                    clicked => {
+                        root.remove();
+                    }
+                }
+
+                Button {
+                    text: "存檔";
+                    clicked => {
+                        root.save();
+                    }
+                }
+            }
+
+            LineEdit {
+                placeholder-text: "搜尋...";
+                text <=> root.query;
+                edited(text) => {
+                    root.search(text);
+                }
+            }
+
+            StandardTableView {
+                columns: [
+                    { title: "字/詞" },
+                    { title: "注音", sort-order: SortOrder.ascending },
+                    { title: "偏好程度 (-100..100)" },
+                ];
+                rows: root.rows;
+                current-row <=> root.current-row;
+                current-row-changed(row) => {
+                    root.pick(row);
+                }
+                sort-ascending(column) => {
+                    root.sort(column, true);
+                }
+                sort-descending(column) => {
+                    root.sort(column, false);
+                }
+            }
+        }
+
+        Rectangle {
+            width: 1px;
+            background: Palette.border;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            alignment: start;
+            spacing: 6px;
+            Label {
+                text: "字/詞";
+            }
+
+            LineEdit {
+                text <=> root.word;
+                enabled: root.editing;
+            }
+
+            Label {
+                text: "注音";
+            }
+
+            LineEdit {
+                text <=> root.bopomofo;
+                enabled: root.editing;
+                placeholder-text: "切換到英數模式可輸入注音，目前只支援標準鍵盤";
+                edited(text) => {
+                    root.bopomofo = root.map-bopomofo(text);
+                }
+            }
+
+            Label {
+                text: "常用度";
+            }
+
+            SpinBox {
+                minimum: -100;
+                maximum: 100;
+                value <=> root.boost;
+                enabled: root.editing;
+            }
+
+            VerticalLayout {
+                padding-top: 20px;
+                spacing: 5px;
+                for keys[row] in [
+                    ["ㄅ", "ㄉ", "ˇ", "ˋ", "ㄓ", "ˊ", "˙", "ㄚ", "ㄞ", "ㄢ", "ㄦ"],
+                    ["ㄆ", "ㄊ", "ㄍ", "ㄐ", "ㄔ", "ㄗ", "ㄧ", "ㄛ", "ㄟ", "ㄣ"],
+                    ["ㄇ", "ㄋ", "ㄎ", "ㄑ", "ㄕ", "ㄘ", "ㄨ", "ㄜ", "ㄠ", "ㄤ"],
+                    ["ㄈ", "ㄌ", "ㄏ", "ㄒ", "ㄖ", "ㄙ", "ㄩ", "ㄝ", "ㄡ", "ㄥ"],
+                ]: HorizontalLayout {
+                    alignment: start;
+                    // Staggered as the keyboard's rows.
+                    padding-left: row * 10px;
+                    spacing: 5px;
+                    for key in keys: Button {
+                        width: 36px;
+                        text: key;
+                        enabled: root.editing;
+                        clicked => {
+                            root.bopomofo += key;
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 5px;
+                    Button {
+                        text: "清空注音";
+                        enabled: root.editing;
+                        clicked => {
+                            root.bopomofo = "";
+                        }
+                    }
+
+                    Button {
+                        horizontal-stretch: 1;
+                        accessible-label: "空白";
+                        enabled: root.editing;
+                        clicked => {
+                            root.bopomofo += " ";
+                        }
+                    }
+
+                    Button {
+                        text: "確定";
+                        primary: true;
+                        enabled: root.editing;
+                        clicked => {
+                            root.apply();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.toast != "": Rectangle {
+        x: parent.width - self.width - 16px;
+        y: parent.height - self.height - 16px;
+        width: message.preferred-width + 32px;
+        height: message.preferred-height + 24px;
+        background: Palette.alternate-background;
+        border-radius: 6px;
+        border-width: 1px;
+        border-color: Palette.border;
+        drop-shadow-blur: 12px;
+        drop-shadow-color: #00000044;
+        message := Text {
+            text: root.toast;
+            color: Palette.alternate-foreground;
+        }
+    }
+}

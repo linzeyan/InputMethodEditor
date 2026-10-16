@@ -43,46 +43,59 @@ fn system_path_for_file(file: &str) -> Result<PathBuf, Error> {
     })
 }
 
-#[tauri::command]
-pub(crate) fn import_config(path: String) -> Result<Config, String> {
-    fn inner(path: &str) -> Result<Config, Error> {
+pub(crate) fn import_config(path: &Path) -> Result<Config, String> {
+    fn inner(path: &Path) -> Result<Config, Error> {
         expect_error("無法讀取設定檔", || {
             let content = fs::read_to_string(path)?;
             let cfg: Config = toml::from_str(&content)?;
             Ok(cfg)
         })
     }
-    inner(&path).map_err(|e| e.report().to_string())
+    inner(path).map_err(|e| e.report().to_string())
 }
 
-#[tauri::command]
-pub(crate) fn export_config(path: String, config: Config) -> Result<(), String> {
-    fn inner(path: &str, config: &Config) -> Result<(), Error> {
+pub(crate) fn export_config(path: &Path, config: &Config) -> Result<(), String> {
+    fn inner(path: &Path, config: &Config) -> Result<(), Error> {
         expect_error("無法匯出設定檔", || {
             let content = toml::to_string_pretty(config)?;
             fs::write(path, &content)?;
             Ok(())
         })
     }
-    inner(&path, &config).map_err(|e| e.report().to_string())
+    inner(path, config).map_err(|e| e.report().to_string())
 }
 
-#[tauri::command]
+/// What each setting starts as, the tables being the system's.
+pub(crate) fn default_config() -> Config {
+    let system = |file| {
+        system_path_for_file(file)
+            .and_then(|path| {
+                expect_error("無法讀取系統檔案", || Ok(fs::read_to_string(path)?))
+            })
+            .unwrap_or_default()
+    };
+    Config {
+        symbols_dat: system("symbols.dat"),
+        swkb_dat: system("swkb.dat"),
+        ..Default::default()
+    }
+}
+
 pub(crate) fn load_config() -> Result<Config, String> {
     fn inner() -> Result<Config, Error> {
         expect_error("無法讀取設定檔", || {
             let mut cfg = Config::from_reg()?;
 
             if let Ok(path) = user_path_for_file("symbols.dat") {
-                cfg.symbols_dat = fs::read_to_string(path)?.into();
+                cfg.symbols_dat = fs::read_to_string(path)?;
             } else if let Ok(path) = system_path_for_file("symbols.dat") {
-                cfg.symbols_dat = fs::read_to_string(path)?.into();
+                cfg.symbols_dat = fs::read_to_string(path)?;
             }
 
             if let Ok(path) = user_path_for_file("swkb.dat") {
-                cfg.swkb_dat = fs::read_to_string(path)?.into();
+                cfg.swkb_dat = fs::read_to_string(path)?;
             } else if let Ok(path) = system_path_for_file("swkb.dat") {
-                cfg.swkb_dat = fs::read_to_string(path)?.into();
+                cfg.swkb_dat = fs::read_to_string(path)?;
             }
 
             if let Ok(path) = user_path_for_file(PHRASES_FILE) {
@@ -96,23 +109,7 @@ pub(crate) fn load_config() -> Result<Config, String> {
     inner().map_err(|e| e.report().to_string())
 }
 
-/// What each setting starts as, the tables being the system's.
-#[tauri::command]
-pub(crate) fn default_config() -> Config {
-    let system = |file| {
-        system_path_for_file(file)
-            .and_then(|path| expect_error("無法讀取系統檔案", || Ok(fs::read_to_string(path)?)))
-            .unwrap_or_default()
-    };
-    Config {
-        symbols_dat: system("symbols.dat"),
-        swkb_dat: system("swkb.dat"),
-        ..Default::default()
-    }
-}
-
-#[tauri::command]
-pub fn save_config(mut config: Config) -> Result<(), String> {
+pub(crate) fn save_config(mut config: Config) -> Result<(), String> {
     // Before anything is saved, so a bad line leaves all as it was; the user
     // fixes it from the message, which needs no source location.
     phrases::parse(&config.custom_phrase_dat).map_err(|error| format!("自訂詞組{error}"))?;
@@ -170,13 +167,13 @@ pub fn save_config(mut config: Config) -> Result<(), String> {
 }
 
 /// Whether the candidate list is dark, by its background. The settings'
-/// windows go dark with it; light, they follow Windows, as before the
-/// candidate list was given colors. The frontend's `isDark` is the same.
+/// window goes dark with it; light, it follows Windows, as before the
+/// candidate list was given colors.
 pub(crate) fn dark_candidates() -> bool {
     Config::from_reg().is_ok_and(|cfg| is_dark(&cfg.chewing_tsf.font_bg_color))
 }
 
-fn is_dark(rgba: &str) -> bool {
+pub(crate) fn is_dark(rgba: &str) -> bool {
     let channel = |i: usize| u32::from_str_radix(rgba.get(i..i + 2)?, 16).ok();
     match (channel(0), channel(2), channel(4)) {
         (Some(r), Some(g), Some(b)) => 299 * r + 587 * g + 114 * b < 128_000,

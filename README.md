@@ -33,9 +33,6 @@ Windows 中文輸入法，核心是 [libchewing](https://codeberg.org/chewing/li
 
 Windows 10／11 x64。在 ARM64 版 Windows 上只能用於 x64／x86 程式。
 
-設定程式需要 WebView2 執行階段：Windows 11 內建，Windows 10 通常已隨 Edge 安裝；
-沒有的話從 [Microsoft](https://developer.microsoft.com/microsoft-edge/webview2/) 下載。
-
 ## 安裝
 
 執行 `InputMethodEditor.msi`，在 UAC 視窗按「是」。它會裝到

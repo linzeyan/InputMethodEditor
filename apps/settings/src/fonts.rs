@@ -6,7 +6,6 @@ use std::cmp::Ordering;
 
 use log::error;
 use scoped_error::{Error, expect_error};
-use serde::{Deserialize, Serialize};
 use windows::{
     Win32::{
         Foundation::FALSE,
@@ -21,15 +20,19 @@ use windows::{
     core::{PCWSTR, w},
 };
 
-#[tauri::command]
-pub async fn get_system_fonts() -> Result<Vec<FontFamilyName>, String> {
-    enum_font_families_dwrite().map_err(|e| e.to_string())
+/// The fonts that can show Traditional Chinese, localized names first.
+pub(crate) fn system_fonts() -> Vec<FontFamilyName> {
+    enum_font_families_dwrite().unwrap_or_else(|error| {
+        error!("{error}");
+        vec![]
+    })
 }
 
-#[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct FontFamilyName {
-    name: String,
-    display_name: String,
+    /// What the config keeps.
+    pub(crate) name: String,
+    /// What the list shows.
+    pub(crate) display_name: String,
 }
 
 const LOCALE_LIST: [PCWSTR; 3] = [w!("zh-tw"), w!("zh-hk"), w!("zh-cn")];
@@ -80,8 +83,8 @@ fn enum_font_families_dwrite() -> Result<Vec<FontFamilyName>, Error> {
                 }
             }
             result.sort_by(|a, b| {
-                let a_localized = a.display_name.chars().any(|ch| !ch.is_ascii());
-                let b_localized = b.display_name.chars().any(|ch| !ch.is_ascii());
+                let a_localized = !a.display_name.is_ascii();
+                let b_localized = !b.display_name.is_ascii();
                 match (a_localized, b_localized) {
                     (true, true) => a.display_name.cmp(&b.display_name),
                     (true, false) => Ordering::Less,
@@ -148,10 +151,11 @@ fn get_localized_info_string(font_family: &IDWriteFontFamily) -> Option<String> 
                 continue;
             };
         }
-        if exists.as_bool() && names.is_some() {
-            if let Some(name) = get_localized_name(names.as_ref().unwrap()) {
-                return Some(name);
-            }
+        if exists.as_bool()
+            && let Some(names) = &names
+            && let Some(name) = get_localized_name(names)
+        {
+            return Some(name);
         }
     }
     None

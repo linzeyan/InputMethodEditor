@@ -1,0 +1,1061 @@
+// SPDX-FileCopyrightText: 2025-2026 Chewing Project Authors
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider, SpinBox, Spinner, TabWidget, TextEdit } from "std-widgets.slint";
+export { AboutWindow } from "about.slint";
+export { DictionaryWindow } from "dictionary.slint";
+
+export enum RowKind { header, check, choice, slider, spin, text, more }
+
+// One line of a settings column, made by settings.rs from its table.
+export struct Row {
+    kind: RowKind,
+    label: string,
+    hint: styled-text,
+    advanced: bool,
+    enabled: bool,
+    checked: bool,
+    choices: [string],
+    value: int,
+    minimum: int,
+    maximum: int,
+    text: string,
+}
+
+// The tables' rows, and what is done to them: a row is told by its table
+// and its place there.
+export global Settings {
+    in property <[[Row]]> tables;
+    // One for every tab, as the page had it.
+    in-out property <bool> show-advanced;
+    callback toggled(int, int, bool);
+    callback selected(int, int, int);
+    callback valued(int, int, int);
+    callback typed(int, int, string);
+}
+
+export struct Keybind {
+    action: int,
+    param: string,
+    key: string,
+}
+
+export struct Program {
+    name: string,
+    exe: string,
+    // · 已在清單中, or the list it is in instead.
+    note: string,
+    icon: image,
+    has-icon: bool,
+    checked: bool,
+    // Not already in either list.
+    enabled: bool,
+    // By the search.
+    shown: bool,
+}
+
+// A section of a tab, for switches that touch the same keys or feature.
+component Header {
+    in property <string> label;
+    HorizontalLayout {
+        padding-top: 12px;
+        padding-bottom: 4px;
+        spacing: 8px;
+        Text {
+            text: root.label;
+            color: Palette.foreground;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                height: 1px;
+                background: Palette.border;
+            }
+        }
+    }
+}
+
+// The widgets below take their own clicks and typing, which ends a binding
+// to the row: each is set again from the row when settings.rs changes it, by
+// a rule or a reset.
+
+component Check {
+    in property <Row> item;
+    callback toggled(bool);
+    changed item => {
+        box.checked = root.item.checked;
+    }
+    HorizontalLayout {
+        alignment: start;
+        box := CheckBox {
+            text: root.item.label;
+            enabled: root.item.enabled;
+            checked: root.item.checked;
+            toggled => {
+                root.toggled(self.checked);
+            }
+            Tooltip {
+                text: root.item.hint;
+            }
+        }
+    }
+}
+
+component Label inherits Text {
+    in property <bool> enabled: true;
+    color: Palette.foreground;
+    opacity: self.enabled ? 1 : 0.5;
+    vertical-alignment: center;
+}
+
+component Choice {
+    in property <Row> item;
+    callback selected(int);
+    changed item => {
+        box.current-index = root.item.value;
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        Label {
+            text: root.item.label;
+            enabled: root.item.enabled;
+        }
+
+        // As wide as the longest choice, not the chosen one: the popup takes
+        // the box's width and cut the longer ones short. 48px is the popup's
+        // padding around an item's text, a bit more than the box's own.
+        VerticalLayout {
+            box := ComboBox {
+                model: root.item.choices;
+                current-index: root.item.value;
+                enabled: root.item.enabled;
+                selected => {
+                    root.selected(self.current-index);
+                }
+            }
+
+            for choice in root.item.choices: Rectangle {
+                height: 0px;
+                min-width: choice-text.preferred-width + 48px;
+                choice-text := Text {
+                    text: choice;
+                    visible: false;
+                }
+            }
+        }
+    }
+
+    Tooltip {
+        text: root.item.hint;
+    }
+}
+
+component Spin {
+    in property <Row> item;
+    callback edited(int);
+    changed item => {
+        box.value = root.item.value;
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        Label {
+            text: root.item.label;
+            enabled: root.item.enabled;
+        }
+
+        box := SpinBox {
+            width: 120px;
+            minimum: root.item.minimum;
+            maximum: root.item.maximum;
+            value: root.item.value;
+            enabled: root.item.enabled;
+            edited(value) => {
+                root.edited(value);
+            }
+        }
+    }
+
+    Tooltip {
+        text: root.item.hint;
+    }
+}
+
+component Field {
+    in property <Row> item;
+    callback edited(string);
+    changed item => {
+        // Not while typing: the text is the row's already, and setting it
+        // again would move the cursor.
+        if box.text != root.item.text {
+            box.text = root.item.text;
+        }
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        padding-top: 3px;
+        padding-bottom: 3px;
+        Label {
+            width: 150px;
+            text: root.item.label;
+            enabled: root.item.enabled;
+        }
+
+        box := LineEdit {
+            width: 110px;
+            text: root.item.text;
+            enabled: root.item.enabled;
+            edited(text) => {
+                root.edited(text);
+            }
+        }
+    }
+
+    Tooltip {
+        text: root.item.hint;
+    }
+}
+
+component Sensitivity {
+    in property <Row> item;
+    callback moved(int);
+    changed item => {
+        bar.value = root.item.value;
+    }
+    VerticalLayout {
+        spacing: 4px;
+        padding-bottom: 8px;
+        Text {
+            text: root.item.label;
+            color: Palette.foreground;
+        }
+
+        bar := Slider {
+            minimum: 100;
+            maximum: 1000;
+            step: 100;
+            value: root.item.value;
+            changed(value) => {
+                root.moved(Math.round(value));
+            }
+        }
+    }
+
+    Tooltip {
+        text: root.item.hint;
+    }
+}
+
+// 進階設定..., showing the rows marked advanced; it opens from the keyboard too.
+component More {
+    in property <string> label;
+    in-out property <bool> open;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-expandable: true;
+    accessible-expanded: root.open;
+    accessible-action-default => {
+        root.open = !root.open;
+    }
+    HorizontalLayout {
+        alignment: start;
+        padding-top: 4px;
+        padding-bottom: 10px;
+        focus := FocusScope {
+            key-pressed(event) => {
+                if event.text == " " || event.text == Key.Return {
+                    root.open = !root.open;
+                    return accept;
+                }
+                reject
+            }
+            Rectangle {
+                border-radius: 4px;
+                border-width: focus.has-focus ? 1px : 0px;
+                border-color: Palette.foreground;
+            }
+
+            TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.open = !root.open;
+                    focus.focus();
+                }
+            }
+
+            // Drawn: the fonts Chinese falls back to have no ▸.
+            HorizontalLayout {
+                padding-left: 2px;
+                padding-right: 2px;
+                spacing: 4px;
+                VerticalLayout {
+                    alignment: center;
+                    Image {
+                        source: root.open ? @image-url("chevron-down.svg") : @image-url("chevron-right.svg");
+                        colorize: Palette.foreground;
+                        width: 12px;
+                        height: 12px;
+                    }
+                }
+
+                Text {
+                    text: root.label;
+                    color: Palette.foreground;
+                }
+            }
+        }
+    }
+}
+
+// The rows of one table in Settings.tables.
+component Column {
+    in property <int> table;
+    VerticalLayout {
+        alignment: start;
+        for row[index] in Settings.tables[root.table]: line := VerticalLayout {
+            property <bool> shown: !row.advanced || Settings.show-advanced;
+            if line.shown && row.kind == RowKind.header: Header {
+                label: row.label;
+            }
+            if line.shown && row.kind == RowKind.check: Check {
+                item: row;
+                toggled(on) => {
+                    Settings.toggled(root.table, index, on);
+                }
+            }
+            if line.shown && row.kind == RowKind.choice: Choice {
+                item: row;
+                selected(choice) => {
+                    Settings.selected(root.table, index, choice);
+                }
+            }
+            if line.shown && row.kind == RowKind.slider: Sensitivity {
+                item: row;
+                moved(value) => {
+                    Settings.valued(root.table, index, value);
+                }
+            }
+            if line.shown && row.kind == RowKind.spin: Spin {
+                item: row;
+                edited(value) => {
+                    Settings.valued(root.table, index, value);
+                }
+            }
+            if line.shown && row.kind == RowKind.text: Field {
+                item: row;
+                edited(text) => {
+                    Settings.typed(root.table, index, text);
+                }
+            }
+            if row.kind == RowKind.more: More {
+                label: row.label;
+                open <=> Settings.show-advanced;
+            }
+        }
+    }
+}
+
+component Help inherits Text {
+    color: Palette.foreground;
+    wrap: word-wrap;
+}
+
+component KeybindHeader {
+    in property <string> label;
+    in property <styled-text> hint;
+    Text {
+        text: root.label;
+        color: Palette.foreground;
+        font-weight: 600;
+    }
+
+    Tooltip {
+        text: root.hint;
+    }
+}
+
+component KeybindRow {
+    in property <Keybind> item;
+    in property <[string]> actions;
+    callback action(int);
+    callback param(string);
+    callback key(string);
+    callback remove();
+    changed item => {
+        chosen.current-index = root.item.action;
+        if param.text != root.item.param {
+            param.text = root.item.param;
+        }
+        if key.text != root.item.key {
+            key.text = root.item.key;
+        }
+    }
+    HorizontalLayout {
+        alignment: start;
+        spacing: 8px;
+        padding-bottom: 6px;
+        chosen := ComboBox {
+            width: 200px;
+            model: root.actions;
+            current-index: root.item.action;
+            selected => {
+                root.action(self.current-index);
+            }
+        }
+
+        param := LineEdit {
+            width: 200px;
+            text: root.item.param;
+            edited(text) => {
+                root.param(text);
+            }
+        }
+
+        key := LineEdit {
+            width: 200px;
+            text: root.item.key;
+            edited(text) => {
+                root.key(text);
+            }
+        }
+
+        Button {
+            icon: @image-url("delete.svg");
+            colorize-icon: true;
+            accessible-label: "刪除";
+            clicked => {
+                root.remove();
+            }
+        }
+    }
+}
+
+component PickRow {
+    in property <Program> item;
+    callback toggled(bool);
+    changed item => {
+        box.checked = root.item.checked;
+    }
+    height: root.item.shown ? 34px : 0px;
+    visible: root.item.shown;
+    // The name and file pick it too, as a checkbox's label does.
+    TouchArea {
+        enabled: root.item.enabled;
+        clicked => {
+            box.checked = !box.checked;
+            root.toggled(box.checked);
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+        box := CheckBox {
+            checked: root.item.checked;
+            enabled: root.item.enabled;
+            toggled => {
+                root.toggled(self.checked);
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Image {
+                source: root.item.has-icon ? root.item.icon : @image-url("app.svg");
+                colorize: root.item.has-icon ? transparent : Palette.foreground;
+                width: 20px;
+                height: 20px;
+            }
+        }
+
+        Label {
+            text: root.item.name;
+            enabled: root.item.enabled;
+        }
+
+        Label {
+            text: root.item.exe + root.item.note;
+            font-size: 12px;
+            opacity: 0.6;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    in property <string> version;
+    // Set when the candidate colors turn the window dark or back.
+    in property <ColorScheme> scheme;
+    changed scheme => {
+        Palette.color-scheme = root.scheme;
+    }
+
+    in-out property <string> english-apps;
+    in-out property <string> chinese-apps;
+    in-out property <bool> symbol-key-on;
+    in-out property <string> symbol-key;
+    in-out property <string> symbols;
+    in-out property <string> swkb;
+    in-out property <string> phrases;
+    in property <styled-text> symbol-hint;
+
+    in property <[Keybind]> keybinds;
+    in property <[string]> actions;
+    // For 動作, 參數 and 快捷鍵.
+    in property <[styled-text]> keybind-hints;
+    callback keybind-action(int, int);
+    callback keybind-param(int, string);
+    callback keybind-key(int, string);
+    callback keybind-remove(int);
+    callback keybind-add();
+
+    // The list the picker adds to: 1 英數, 2 中文, 0 none open.
+    in property <int> picking;
+    in property <[Program]> programs;
+    in property <bool> programs-loaded;
+    in property <string> programs-error;
+    in property <int> picked;
+    // Of what the search shows.
+    in property <int> pickable;
+    in property <bool> all-picked;
+    callback open-picker(int);
+    callback search-programs(string);
+    callback pick-program(int, bool);
+    callback pick-all(bool);
+    callback add-programs();
+    callback close-picker();
+
+    in property <bool> checking;
+    in property <string> update-status;
+    callback check-update();
+    callback open-log-dir();
+
+    callback reset(int);
+    callback ok();
+    callback cancel();
+    callback apply();
+    callback import();
+    callback export();
+    callback about();
+
+    title: "InputMethodEditor 設定 (" + root.version + ")";
+    preferred-width: 820px;
+    // With the title and menu bars, still within a 1080p screen at 150%
+    // above the taskbar.
+    preferred-height: 600px;
+    background: Palette.background;
+
+    MenuBar {
+        Menu {
+            title: "檔案";
+            MenuItem {
+                title: "匯入設定檔...";
+                activated => {
+                    root.import();
+                }
+            }
+
+            MenuItem {
+                title: "匯出設定檔...";
+                activated => {
+                    root.export();
+                }
+            }
+        }
+
+        Menu {
+            title: "關於";
+            MenuItem {
+                title: "關於 InputMethodEditor";
+                activated => {
+                    root.about();
+                }
+            }
+        }
+    }
+
+    VerticalLayout {
+        padding: 8px;
+        spacing: 8px;
+        tabs := TabWidget {
+            Tab {
+                title: "打字行為";
+                HorizontalLayout {
+                    padding: 16px;
+                    spacing: 24px;
+                    Column {
+                        table: 0;
+                    }
+
+                    Column {
+                        table: 1;
+                    }
+                }
+            }
+
+            Tab {
+                title: "各程式";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        spacing: 16px;
+                        vertical-stretch: 1;
+                        VerticalLayout {
+                            spacing: 8px;
+                            Label {
+                                text: "開啟或切換到這些程式時用英數：";
+                            }
+
+                            TextEdit {
+                                text <=> root.english-apps;
+                                font-family: "Consolas";
+                                vertical-stretch: 1;
+                            }
+
+                            HorizontalLayout {
+                                alignment: start;
+                                Button {
+                                    text: "從程式清單加入…";
+                                    clicked => {
+                                        root.open-picker(1);
+                                    }
+                                }
+                            }
+                        }
+
+                        VerticalLayout {
+                            spacing: 8px;
+                            Label {
+                                text: "開啟或切換到這些程式時用中文：";
+                            }
+
+                            TextEdit {
+                                text <=> root.chinese-apps;
+                                font-family: "Consolas";
+                                vertical-stretch: 1;
+                            }
+
+                            HorizontalLayout {
+                                alignment: start;
+                                Button {
+                                    text: "從程式清單加入…";
+                                    clicked => {
+                                        root.open-picker(2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Help {
+                        text: "每行一個程式的執行檔名稱，例如 chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到，或按「從程式清單加入」挑選；大小寫不拘，.exe 可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依 CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock 讓燈號對上。";
+                    }
+                }
+            }
+
+            Tab {
+                title: "界面外觀";
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: start;
+                    Column {
+                        table: 2;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 24px;
+                        Column {
+                            table: 3;
+                        }
+
+                        Column {
+                            table: 4;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "鍵盤設定";
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: start;
+                    Column {
+                        table: 5;
+                    }
+                }
+            }
+
+            Tab {
+                title: "拼音";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    alignment: start;
+                    Column {
+                        table: 6;
+                    }
+
+                    Help {
+                        text: "模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong 也有「中」。只在拼音模式作用。";
+                    }
+
+                    HorizontalLayout {
+                        spacing: 24px;
+                        Column {
+                            table: 7;
+                        }
+
+                        Column {
+                            table: 8;
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "自訂快捷鍵";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        KeybindHeader {
+                            width: 200px;
+                            label: "動作";
+                            hint: root.keybind-hints[0];
+                        }
+
+                        KeybindHeader {
+                            width: 200px;
+                            label: "參數";
+                            hint: root.keybind-hints[1];
+                        }
+
+                        KeybindHeader {
+                            width: 200px;
+                            label: "快捷鍵";
+                            hint: root.keybind-hints[2];
+                        }
+
+                        Text {
+                            text: "刪除";
+                            color: Palette.foreground;
+                            font-weight: 600;
+                        }
+                    }
+
+                    Rectangle {
+                        height: 1px;
+                        background: Palette.border;
+                    }
+
+                    ListView {
+                        for keybind[index] in root.keybinds: KeybindRow {
+                            item: keybind;
+                            actions: root.actions;
+                            action(choice) => {
+                                root.keybind-action(index, choice);
+                            }
+                            param(text) => {
+                                root.keybind-param(index, text);
+                            }
+                            key(text) => {
+                                root.keybind-key(index, text);
+                            }
+                            remove => {
+                                root.keybind-remove(index);
+                            }
+                        }
+                    }
+
+                    Button {
+                        text: "+";
+                        accessible-label: "新增快捷鍵";
+                        clicked => {
+                            root.keybind-add();
+                        }
+                    }
+                }
+            }
+
+            Tab {
+                title: "特殊符號";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 8px;
+                        CheckBox {
+                            text: "中文模式下按這個鍵開啟符號表：";
+                            checked <=> root.symbol-key-on;
+                            Tooltip {
+                                text: root.symbol-hint;
+                            }
+                        }
+
+                        LineEdit {
+                            width: 140px;
+                            text <=> root.symbol-key;
+                            enabled: root.symbol-key-on;
+                        }
+                    }
+
+                    Label {
+                        text: "符號表：";
+                    }
+
+                    TextEdit {
+                        text <=> root.symbols;
+                        font-family: "Consolas";
+                        vertical-stretch: 1;
+                    }
+
+                    Help {
+                        text: "以上是符號表的設定檔，語法相當簡單：\n每一行的內容都是：「分類名稱」＝「此分類下的所有符號」\n您也可以一行只放一個符號，則該符號會被放在最上層選單。";
+                    }
+                }
+            }
+
+            Tab {
+                title: "快捷符號";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    Label {
+                        text: "輸入中文時，按下 Shift 鍵（或 Ctrl + Shift）加英文字母即可快速輸入文字：";
+                    }
+
+                    TextEdit {
+                        text <=> root.swkb;
+                        font-family: "Consolas";
+                        vertical-stretch: 1;
+                    }
+
+                    Help {
+                        text: "以上是符號表的設定檔，語法相當簡單：\n每一行的內容都是：「大寫字母」＋「空格」＋「對應的符號或文字」。";
+                    }
+                }
+            }
+
+            Tab {
+                title: "自訂詞組";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    Label {
+                        text: "打縮寫再按空白鍵，就換成設定的文字（注音、拼音都可以用）：";
+                    }
+
+                    TextEdit {
+                        text <=> root.phrases;
+                        font-family: "Consolas";
+                        vertical-stretch: 1;
+                    }
+
+                    Help {
+                        text: "每一行是：「縮寫」＋「空格」＋「文字」，縮寫只能用英文字母，例如：\naddr 臺北市信義區市府路 1 號\n縮寫要在沒有組字時開始打；和拼音相同的縮寫（例如 wo）會取代原本的字。# 開頭的行是註解。";
+                    }
+                }
+            }
+
+            Tab {
+                title: "更新與記錄";
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 8px;
+                    alignment: start;
+                    Column {
+                        table: 9;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 12px;
+                        padding-top: 16px;
+                        Button {
+                            text: "立即檢查更新";
+                            enabled: !root.checking;
+                            clicked => {
+                                root.check-update();
+                            }
+                        }
+
+                        Label {
+                            text: root.update-status;
+                        }
+                    }
+
+                    Column {
+                        table: 10;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "開啟記錄檔資料夾";
+                            clicked => {
+                                root.open-log-dir();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 4px;
+            // 各程式 and 自訂詞組 are the user's own, with nothing to go back to.
+            Button {
+                text: "還原此頁預設值";
+                enabled: tabs.current-index != 1 && tabs.current-index != 8;
+                clicked => {
+                    root.reset(tabs.current-index);
+                }
+            }
+
+            Rectangle { }
+
+            Button {
+                text: "確定";
+                clicked => {
+                    root.ok();
+                }
+            }
+
+            Button {
+                text: "取消";
+                clicked => {
+                    root.cancel();
+                }
+            }
+
+            Button {
+                text: "套用";
+                clicked => {
+                    root.apply();
+                }
+            }
+        }
+    }
+
+    // The program picker, over the settings, which its backdrop keeps from
+    // being clicked meanwhile.
+    if root.picking != 0: Rectangle {
+        property <bool> all-picked: root.all-picked;
+        changed all-picked => {
+            all.checked = self.all-picked;
+        }
+        width: 100%;
+        height: 100%;
+        background: #00000066;
+        TouchArea { }
+
+        Rectangle {
+            width: min(560px, parent.width - 48px);
+            height: min(600px, parent.height - 48px);
+            background: Palette.background;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: Palette.border;
+            drop-shadow-blur: 24px;
+            drop-shadow-color: #00000055;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 8px;
+                Text {
+                    text: root.picking == 1 ? "開啟或切換到時用英數的程式" : "開啟或切換到時用中文的程式";
+                    color: Palette.foreground;
+                    font-size: 20px;
+                    font-weight: 600;
+                }
+
+                LineEdit {
+                    placeholder-text: "搜尋名稱或執行檔";
+                    edited(text) => {
+                        root.search-programs(text);
+                    }
+                }
+
+                // Heads the column of checkboxes it acts on.
+                all := CheckBox {
+                    text: "全選";
+                    enabled: root.pickable > 0;
+                    toggled => {
+                        root.pick-all(self.checked);
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Palette.border;
+                }
+
+                if !root.programs-loaded: HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    Spinner {
+                        indeterminate: true;
+                        width: 20px;
+                        height: 20px;
+                    }
+
+                    Label {
+                        text: "正在讀取程式清單…";
+                    }
+                }
+
+                if root.programs-error != "": Help {
+                    text: "無法讀取程式清單：" + root.programs-error;
+                }
+
+                // Not a ListView, which drew every row at the top: its rows'
+                // height depends on the search, which a layout follows.
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        alignment: start;
+                        for program[index] in root.programs: PickRow {
+                            item: program;
+                            toggled(on) => {
+                                root.pick-program(index, on);
+                            }
+                        }
+                    }
+                }
+
+                HorizontalLayout {
+                    alignment: end;
+                    spacing: 4px;
+                    Button {
+                        text: root.picked > 0 ? "加入 \{root.picked} 個" : "加入";
+                        primary: true;
+                        enabled: root.picked > 0;
+                        clicked => {
+                            root.add-programs();
+                        }
+                    }
+
+                    Button {
+                        text: "取消";
+                        clicked => {
+                            root.close-picker();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
