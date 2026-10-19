@@ -399,6 +399,17 @@ component Column {
     }
 }
 
+// A file edited in full: program lists, symbol tables, phrases.
+component Editor inherits TextEdit {
+    font-family: "Consolas";
+    vertical-stretch: 1;
+    // TextEdit scrolls to keep the cursor 20px clear of its bottom edge. The
+    // window is laid out once at its least height, which the scrolling tabs
+    // made small: below 20px, the cursor at the top counted as out of view,
+    // and the symbol table opened scrolled down.
+    min-height: 120px;
+}
+
 component Help inherits Text {
     color: Palette.foreground;
     wrap: word-wrap;
@@ -654,10 +665,8 @@ export component SettingsWindow inherits Window {
                                 text: "開啟或切換到這些程式時用英數：";
                             }
 
-                            TextEdit {
+                            Editor {
                                 text <=> root.english-apps;
-                                font-family: "Consolas";
-                                vertical-stretch: 1;
                             }
 
                             HorizontalLayout {
@@ -677,10 +686,8 @@ export component SettingsWindow inherits Window {
                                 text: "開啟或切換到這些程式時用中文：";
                             }
 
-                            TextEdit {
+                            Editor {
                                 text <=> root.chinese-apps;
-                                font-family: "Consolas";
-                                vertical-stretch: 1;
                             }
 
                             HorizontalLayout {
@@ -865,10 +872,8 @@ export component SettingsWindow inherits Window {
                         text: "符號表：";
                     }
 
-                    TextEdit {
+                    Editor {
                         text <=> root.symbols;
-                        font-family: "Consolas";
-                        vertical-stretch: 1;
                     }
 
                     Help {
@@ -886,10 +891,8 @@ export component SettingsWindow inherits Window {
                         text: "輸入中文時，按下 Shift 鍵（或 Ctrl + Shift）加英文字母即可快速輸入文字：";
                     }
 
-                    TextEdit {
+                    Editor {
                         text <=> root.swkb;
-                        font-family: "Consolas";
-                        vertical-stretch: 1;
                     }
 
                     Help {
@@ -907,10 +910,8 @@ export component SettingsWindow inherits Window {
                         text: "打縮寫再按空白鍵，就換成設定的文字（注音、拼音都可以用）：";
                     }
 
-                    TextEdit {
+                    Editor {
                         text <=> root.phrases;
-                        font-family: "Consolas";
-                        vertical-stretch: 1;
                     }
 
                     Help {
