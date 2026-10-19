@@ -2,13 +2,58 @@
 // Copyright (c) 2026 Kan-Ru Chen
 
 use anyhow::Result;
-use windows::Win32::Graphics::Direct2D::{
-    CLSID_D2D1GaussianBlur,
-    Common::{D2D_RECT_F, D2D_SIZE_F, D2D1_COLOR_F, D2D1_COMPOSITE_MODE_SOURCE_OVER},
-    D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT,
-    ID2D1DeviceContext,
+use windows::Win32::Graphics::{
+    Direct2D::{
+        CLSID_D2D1GaussianBlur,
+        Common::{
+            D2D_RECT_F, D2D_SIZE_F, D2D_SIZE_U, D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_COLOR_F,
+            D2D1_COMPOSITE_MODE_SOURCE_OVER, D2D1_PIXEL_FORMAT,
+        },
+        D2D1_BITMAP_BRUSH_PROPERTIES1, D2D1_BITMAP_OPTIONS_NONE, D2D1_BITMAP_PROPERTIES1,
+        D2D1_COMPATIBLE_RENDER_TARGET_OPTIONS_NONE, D2D1_EXTEND_MODE_WRAP,
+        D2D1_INTERPOLATION_MODE_LINEAR, D2D1_ROUNDED_RECT, ID2D1Brush, ID2D1DeviceContext,
+    },
+    Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
 };
+use windows_core::Interface;
 use windows_numerics::Vector2;
+
+use crate::ui::skin::{Skin, TILE_DPI};
+
+/// The skin's tile, repeated from the window's corner.
+fn skin_brush(dc: &ID2D1DeviceContext, skin: Skin) -> Result<ID2D1Brush> {
+    let texture = skin.texture();
+    unsafe {
+        let bitmap = dc.CreateBitmap(
+            D2D_SIZE_U {
+                width: texture.size,
+                height: texture.size,
+            },
+            Some(texture.pixels.as_ptr().cast()),
+            texture.size * 4,
+            &D2D1_BITMAP_PROPERTIES1 {
+                pixelFormat: D2D1_PIXEL_FORMAT {
+                    format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                    alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+                },
+                dpiX: TILE_DPI,
+                dpiY: TILE_DPI,
+                bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+                ..Default::default()
+            },
+        )?;
+        let brush = dc.CreateBitmapBrush(
+            &bitmap,
+            Some(&D2D1_BITMAP_BRUSH_PROPERTIES1 {
+                extendModeX: D2D1_EXTEND_MODE_WRAP,
+                extendModeY: D2D1_EXTEND_MODE_WRAP,
+                interpolationMode: D2D1_INTERPOLATION_MODE_LINEAR,
+            }),
+            None,
+        )?;
+        Ok(brush.cast()?)
+    }
+}
 
 pub(super) fn draw_message_box(
     dc: &ID2D1DeviceContext,
@@ -18,6 +63,7 @@ pub(super) fn draw_message_box(
     height: f32,
     bg_color: D2D1_COLOR_F,
     border_color: D2D1_COLOR_F,
+    skin: Option<Skin>,
 ) -> Result<()> {
     let blur_radius = 3.0;
     let corner_radius = 8.0;
@@ -79,7 +125,10 @@ pub(super) fn draw_message_box(
             D2D1_INTERPOLATION_MODE_LINEAR,
             D2D1_COMPOSITE_MODE_SOURCE_OVER,
         );
-        let background_brush = dc.CreateSolidColorBrush(&bg_color, None)?;
+        let background_brush: ID2D1Brush = match skin {
+            Some(skin) => skin_brush(dc, skin)?,
+            None => dc.CreateSolidColorBrush(&bg_color, None)?.cast()?,
+        };
         let border_brush = dc.CreateSolidColorBrush(&border_color, None)?;
         dc.FillRoundedRectangle(&rounded_rect, &background_brush);
         dc.DrawRoundedRectangle(&rounded_rect, &border_brush, 0.5, None);

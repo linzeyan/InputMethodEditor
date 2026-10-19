@@ -65,6 +65,7 @@ use crate::{
 };
 
 use super::message_box::draw_message_box;
+use crate::ui::skin::Skin;
 
 #[implement(ITfUIElement, ITfCandidateListUIElement)]
 pub(crate) struct CandidateList {
@@ -98,6 +99,7 @@ pub(crate) struct Model {
     pub(crate) highlight_fg_color: D2D1_COLOR_F,
     pub(crate) highlight_bg_color: D2D1_COLOR_F,
     pub(crate) border_color: D2D1_COLOR_F,
+    pub(crate) skin: Option<Skin>,
 }
 
 pub(crate) enum FilterKeyResult {
@@ -473,6 +475,7 @@ impl View {
                         height,
                         model.bg_color,
                         model.border_color,
+                        model.skin,
                     )?;
                     // Draw the background of the page_number box
                     draw_message_box(
@@ -483,6 +486,7 @@ impl View {
                         metrics.height + margin,
                         model.bg_color,
                         model.border_color,
+                        model.skin,
                     )?;
 
                     let selkey_brush = dc.CreateSolidColorBrush(&model.selkey_color, None)?;

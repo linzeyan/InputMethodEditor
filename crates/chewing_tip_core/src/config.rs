@@ -124,6 +124,10 @@ pub struct ChewingTsfConfig {
     /// The least severe level the text service writes to its log: error,
     /// warn, info, debug or trace. Debug and below record the text typed.
     pub log_level: String,
+    /// The texture behind the composition bar and the candidate list, one
+    /// of wood, washi, marble, bamboo and night, with colors of its own;
+    /// empty for the theme's plain colors.
+    pub skin: String,
     pub modified_timestamp: u64,
 }
 
@@ -200,6 +204,7 @@ impl Default for ChewingTsfConfig {
             update_check_days: 7,
             check_update_at_logon: true,
             log_level: "warn".to_owned(),
+            skin: String::new(),
             modified_timestamp: 0,
         }
     }
@@ -392,6 +397,9 @@ impl Config {
             if let Ok(value) = key.get_string("LogLevel") {
                 cfg.log_level = value;
             }
+            if let Ok(value) = key.get_string("Skin") {
+                cfg.skin = value;
+            }
             if let Ok(value) = key.get_u64("ModifiedTimestamp") {
                 cfg.modified_timestamp = value;
             }
@@ -566,6 +574,7 @@ impl Config {
             chewing_tsf.check_update_at_logon,
         );
         let _ = key.set_string("LogLevel", &chewing_tsf.log_level);
+        let _ = key.set_string("Skin", &chewing_tsf.skin);
         let _ = key.set_multi_string(
             "Keybind".to_string(),
             chewing_tsf

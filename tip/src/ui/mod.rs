@@ -2,4 +2,5 @@
 // Copyright (c) 2026 Kan-Ru Chen
 
 pub(crate) mod gfx;
+pub(crate) mod skin;
 pub(crate) mod window;

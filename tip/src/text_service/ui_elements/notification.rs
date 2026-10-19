@@ -58,6 +58,7 @@ use crate::{
 };
 
 use super::message_box::draw_message_box;
+use crate::ui::skin::Skin;
 
 const ID_TIMEOUT: usize = 1;
 
@@ -85,6 +86,8 @@ pub(crate) struct NotificationModel {
     pub(crate) fg_color: D2D1_COLOR_F,
     pub(crate) bg_color: D2D1_COLOR_F,
     pub(crate) border_color: D2D1_COLOR_F,
+    /// Only the composition bar wears one: messages stand apart from typing.
+    pub(crate) skin: Option<Skin>,
 }
 
 extern "system" fn wnd_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -318,6 +321,7 @@ impl View {
                         height,
                         model.bg_color,
                         model.border_color,
+                        model.skin,
                     )?;
 
                     let margin = 10.0;

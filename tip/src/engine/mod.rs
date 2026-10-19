@@ -69,6 +69,7 @@ use crate::text_service::ui_elements::{
     CandidateList, FilterKeyResult, Model, Notification, NotificationModel,
 };
 use crate::ui::gfx::color_s;
+use crate::ui::skin::{Palette, Skin};
 
 /// The keys Ctrl types fullwidth symbols with (chewing's ，。／；、「」): the
 /// unshifted punctuation, as Shift already gives the shifted ones theirs.
@@ -1042,6 +1043,7 @@ impl Engine {
                 fg_color: color_s(&self.cfg.chewing_tsf.notify_fg_color),
                 bg_color: color_s(&self.cfg.chewing_tsf.notify_bg_color),
                 border_color: color_s(&self.cfg.chewing_tsf.notify_border_color),
+                skin: None,
             });
             let shown = self.candidate_list.as_ref().and_then(|c| c.window_rect());
             let position = match shown.or_else(|| self.composition_bar_rect()) {
@@ -1091,14 +1093,21 @@ impl Engine {
             };
             let cfg = &self.cfg.chewing_tsf;
             let caret = preedit.chars().take(caret).map(char::len_utf16).sum::<usize>();
+            let skin = Skin::from_name(&cfg.skin);
+            let palette = skin.map(Skin::palette);
             bar.set_model(NotificationModel {
                 text: HSTRING::from(preedit),
                 caret: Some(caret as u32),
                 font_family: HSTRING::from(&cfg.font_family),
                 font_size: cfg.font_size as f32,
-                fg_color: color_s(&cfg.font_fg_color),
+                fg_color: color_s(palette.as_ref().map_or(cfg.font_fg_color.as_str(), |p| p.fg)),
                 bg_color: color_s(&cfg.font_bg_color),
-                border_color: color_s(&cfg.cand_list_border_color),
+                border_color: color_s(
+                    palette
+                        .as_ref()
+                        .map_or(cfg.cand_list_border_color.as_str(), |p| p.border),
+                ),
+                skin,
             });
             if let Ok(rect) = ui.caret_rect() {
                 bar.set_position(rect.left, rect.bottom);
@@ -1184,6 +1193,12 @@ impl Engine {
                 let (items, indices) =
                     dedup_candidates(items.iter().map(|it| convert_output(cfg, it)));
                 self.candidate_indices = indices;
+                // A skin brings colors that read on it, over the theme's.
+                let skin = Skin::from_name(&cfg.skin);
+                let palette = skin.map(Skin::palette);
+                let color = |theme: &str, skinned: fn(&Palette) -> &'static str| {
+                    color_s(palette.as_ref().map_or(theme, skinned))
+                };
                 candidate_list.set_model(Model {
                     items,
                     selkeys: sel_keys.chars().take(n).map(|k| k as u16).collect(),
@@ -1192,14 +1207,15 @@ impl Engine {
                     current_page,
                     font_family: HSTRING::from(&cfg.font_family),
                     font_size: cfg.font_size as f32,
-                    fg_color: color_s(&cfg.font_fg_color),
+                    fg_color: color(&cfg.font_fg_color, |p| p.fg),
                     bg_color: color_s(&cfg.font_bg_color),
-                    highlight_fg_color: color_s(&cfg.font_highlight_fg_color),
-                    highlight_bg_color: color_s(&cfg.font_highlight_bg_color),
-                    border_color: color_s(&cfg.cand_list_border_color),
-                    selkey_color: color_s(&cfg.font_number_fg_color),
+                    highlight_fg_color: color(&cfg.font_highlight_fg_color, |p| p.highlight_fg),
+                    highlight_bg_color: color(&cfg.font_highlight_bg_color, |p| p.highlight_bg),
+                    border_color: color(&cfg.cand_list_border_color, |p| p.border),
+                    selkey_color: color(&cfg.font_number_fg_color, |p| p.selkey),
                     use_cursor: cfg.cursor_cand_list,
                     current_sel: 0,
+                    skin,
                 });
 
                 candidate_list.show();
