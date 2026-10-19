@@ -51,7 +51,7 @@ struct RenderableGlyphWeightScale;
 
 impl clru::WeightScale<GlyphCacheKey, RenderableVectorGlyph> for RenderableGlyphWeightScale {
     fn weight(&self, _: &GlyphCacheKey, value: &RenderableVectorGlyph) -> usize {
-        value.alpha_map.len()
+        value.alpha_map.len() * if value.color.is_some() { 5 } else { 1 }
     }
 }
 
@@ -204,13 +204,30 @@ impl VectorFont {
                     .size(self.pixel_size.get() as f32)
                     .normalized_coords(&self.normalized_coords)
                     .build();
-                let image = swash::scale::Render::new(&[swash::scale::Source::Outline])
-                    .format(swash::zeno::Format::Alpha)
-                    .offset(swash::zeno::Vector::new(subpixel_offset_x, 0.0))
-                    .render(&mut scaler, glyph_id.get())?;
+                // COLR layers first, as in Segoe UI Emoji: swash composites
+                // them over transparent black, which leaves them premultiplied.
+                let image = swash::scale::Render::new(&[
+                    swash::scale::Source::ColorOutline(0),
+                    swash::scale::Source::Outline,
+                ])
+                .format(swash::zeno::Format::Alpha)
+                .offset(swash::zeno::Vector::new(subpixel_offset_x, 0.0))
+                .render(&mut scaler, glyph_id.get())?;
 
                 let placement = image.placement;
-                let alpha_map: Rc<[u8]> = image.data.into();
+                let (alpha_map, color): (Rc<[u8]>, _) = match image.content {
+                    swash::scale::image::Content::Color => (
+                        image.data.chunks_exact(4).map(|pixel| pixel[3]).collect(),
+                        Some(i_slint_core::graphics::SharedImageBuffer::RGBA8Premultiplied(
+                            i_slint_core::graphics::SharedPixelBuffer::clone_from_slice(
+                                &image.data,
+                                placement.width,
+                                placement.height,
+                            ),
+                        )),
+                    ),
+                    _ => (image.data.into(), None),
+                };
 
                 Some(RenderableVectorGlyph {
                     x: Fixed::from_integer(placement.left),
@@ -220,6 +237,7 @@ impl VectorFont {
                     alpha_map,
                     pixel_stride: placement.width.try_into().unwrap(),
                     glyph_origin_x: placement.left as f32,
+                    color,
                 })
             };
 

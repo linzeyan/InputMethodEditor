@@ -49,6 +49,9 @@ pub struct RenderableVectorGlyph {
     pub alpha_map: Rc<[u8]>,
     pub pixel_stride: u16,
     pub glyph_origin_x: f32,
+    /// A color glyph's pixels, premultiplied, drawn instead of the alpha map
+    /// in the text's color. The alpha map still covers it for other uses.
+    pub color: Option<i_slint_core::graphics::SharedImageBuffer>,
 }
 
 #[cfg(feature = "systemfonts")]

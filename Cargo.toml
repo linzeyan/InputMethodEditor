@@ -8,6 +8,8 @@ members = [
   "vendor/libchewing",
   "xtask"
 ]
+# A dependency patched below, not one of ours.
+exclude = ["vendor/i-slint-renderer-software"]
 
 [workspace.package]
 version = "0.6.0"
@@ -30,3 +32,6 @@ panic = "abort"
 chewing = { path = "vendor/libchewing" }
 # chewing = { git = "https://codeberg.org/chewing/libchewing.git" }
 # chewing = { path = "../libchewing/" }
+# Draws emoji in their colors, which the software renderer draws in the
+# text's; the settings app can't use Skia, which has no gnullvm build.
+i-slint-renderer-software = { path = "vendor/i-slint-renderer-software" }

@@ -3393,20 +3393,22 @@ impl<T: ProcessScene> sharedparley::GlyphRenderer for SceneBuilder<'_, T> {
                 continue;
             };
 
+            let colorize = glyph.color.is_none().then_some(color);
             let data = {
                 let source_rect = euclid::rect(0, 0, glyph.width.0, glyph.height.0);
-                target_pixel_buffer::TextureDataContainer::Shared {
-                    buffer: SharedBufferData::AlphaMap {
+                let buffer = match glyph.color {
+                    Some(image) => SharedBufferData::SharedImage(image),
+                    None => SharedBufferData::AlphaMap {
                         data: glyph.alpha_map,
                         width: glyph.pixel_stride,
                     },
-                    source_rect,
-                }
+                };
+                target_pixel_buffer::TextureDataContainer::Shared { buffer, source_rect }
             };
 
             let t = target_pixel_buffer::DrawTextureArgs {
                 data,
-                colorize: Some(color),
+                colorize,
                 // color already is mixed with global alpha
                 alpha: color.alpha(),
                 dst_x: target_rect.origin.x as _,
