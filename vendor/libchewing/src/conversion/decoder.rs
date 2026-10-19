@@ -57,6 +57,28 @@ impl Decoder {
             return vec![Hypothesis::default()];
         }
 
+        // Preferred words come first among the words of their span, and no
+        // further: a phrase still beats the preferred characters in it.
+        for es in lattice.edges.iter_mut() {
+            let costs: Vec<f64> = es
+                .iter()
+                .map(|e| self.cost_fun(&Candidate::None, &e.cand))
+                .collect();
+            let mut ends: Vec<u8> = es.iter().map(|e| e.end).collect();
+            ends.sort_unstable();
+            ends.dedup();
+            for end in ends {
+                let span: Vec<usize> = (0..es.len()).filter(|&i| es[i].end == end).collect();
+                let bonus =
+                    preferred_bonus(span.iter().map(|&i| (is_preferred(&es[i].cand), costs[i])));
+                for i in span {
+                    if is_preferred(&es[i].cand) {
+                        es[i].bonus = bonus;
+                    }
+                }
+            }
+        }
+
         // Prune
         const KEEP_PER_SPAN: usize = 10;
         for es in lattice.edges.iter_mut() {
@@ -68,7 +90,7 @@ impl Decoder {
                 .map(|e| {
                     (
                         e.end,
-                        OrderedF64(self.cost_fun(&Candidate::None, &e.cand)),
+                        OrderedF64(self.cost_fun(&Candidate::None, &e.cand) - e.bonus),
                         e.clone(),
                     )
                 })
@@ -93,9 +115,18 @@ impl Decoder {
     ///
     /// Candidates sorted from most likely to least likely.
     pub fn rank(&self, candidates: Vec<Candidate>) -> Vec<Candidate> {
+        let costs: Vec<f64> = candidates
+            .iter()
+            .map(|c| self.cost_fun(&Candidate::None, c))
+            .collect();
+        let bonus = preferred_bonus(candidates.iter().map(is_preferred).zip(costs.iter().copied()));
         let mut ranked: Vec<_> = candidates
             .iter()
-            .map(|c| (OrderedF64(self.cost_fun(&Candidate::None, c)), c))
+            .zip(costs)
+            .map(|(c, cost)| {
+                let bonus = if is_preferred(c) { bonus } else { 0.0 };
+                (OrderedF64(cost - bonus), c)
+            })
             .collect();
         ranked.sort_by_key(|&(cost, _)| cost);
         ranked.into_iter().map(|(_, w)| w.clone()).collect()
@@ -113,6 +144,7 @@ impl Decoder {
                 wid: _,
                 hist_prob,
                 user_pref,
+                ..
             } => (*hist_prob, *user_pref),
             _ => (f64::NEG_INFINITY, None),
         };
@@ -132,6 +164,37 @@ impl Decoder {
         let cost = -mixed;
         let manual_gain = user_pref.unwrap_or(0) as f64 / 100.0;
         cost - MANUAL_BOOST_FACTOR * manual_gain
+    }
+}
+
+/// How far the best preferred word comes before the best of the rest.
+const PREFERRED_MARGIN: f64 = 0.1;
+
+fn is_preferred(cand: &Candidate) -> bool {
+    matches!(
+        cand,
+        Candidate::Word {
+            preferred: true,
+            ..
+        }
+    )
+}
+
+/// What preferred words need off their cost, all the same, for the best of
+/// them to come before the others while keeping their order.
+fn preferred_bonus(costs: impl Iterator<Item = (bool, f64)>) -> f64 {
+    let (mut preferred, mut others) = (f64::INFINITY, f64::INFINITY);
+    for (is_preferred, cost) in costs {
+        if is_preferred {
+            preferred = preferred.min(cost);
+        } else {
+            others = others.min(cost);
+        }
+    }
+    if preferred.is_finite() && others.is_finite() {
+        (preferred - others + PREFERRED_MARGIN).max(0.0)
+    } else {
+        0.0
     }
 }
 
@@ -181,7 +244,7 @@ where
         let layer = std::mem::take(&mut layers[p]);
         for (prev, entries) in layer {
             for e in &lattice.edges[p] {
-                let cost = cost_fn(&prev, &e.cand);
+                let cost = cost_fn(&prev, &e.cand) - e.bonus;
                 let keep_list = get_keep_list(&mut layers[e.end as usize], &e.cand);
                 for ent in &entries {
                     insert_keep_k(keep_list, ent.cost + cost, ent.tid, e, &mut trails, keep);
@@ -287,6 +350,7 @@ mod test {
             wid: WordId(wid),
             hist_prob: 0.0,
             user_pref: None,
+            preferred: false,
         }
     }
 
@@ -303,15 +367,18 @@ mod test {
                     Edge {
                         end: 1,
                         cand: word(1),
+                        bonus: 0.0,
                     },
                     Edge {
                         end: 2,
                         cand: word(3),
+                        bonus: 0.0,
                     },
                 ],
                 vec![Edge {
                     end: 2,
                     cand: word(2),
+                    bonus: 0.0,
                 }],
             ],
         };
@@ -341,19 +408,23 @@ mod test {
                     Edge {
                         end: 1,
                         cand: word(1),
+                        bonus: 0.0,
                     },
                     Edge {
                         end: 1,
                         cand: word(4),
+                        bonus: 0.0,
                     },
                     Edge {
                         end: 2,
                         cand: word(5),
+                        bonus: 0.0,
                     },
                 ],
                 vec![Edge {
                     end: 2,
                     cand: word(2),
+                    bonus: 0.0,
                 }],
             ],
         };

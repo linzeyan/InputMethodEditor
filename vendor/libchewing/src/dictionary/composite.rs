@@ -95,11 +95,13 @@ impl CompositeDict {
                 res.push((wid, f64::NEG_INFINITY, Some(boost)));
             }
         }
+        let preferred = self.inner.history_dict.preferred(syllables, strategy);
         res.into_iter()
             .map(|cand| Candidate::Word {
                 wid: cand.0,
                 hist_prob: cand.1,
                 user_pref: cand.2,
+                preferred: preferred.contains(&cand.0),
             })
             .collect()
     }

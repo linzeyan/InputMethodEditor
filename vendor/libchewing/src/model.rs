@@ -64,6 +64,9 @@ pub enum Candidate {
         wid: WordId,
         hist_prob: f64,
         user_pref: Option<i8>,
+        /// Picked by the user for this reading often enough to come first
+        /// among the words as long (see `HistoryDict::observe_choice`).
+        preferred: bool,
     },
     Grapheme(String),
 }

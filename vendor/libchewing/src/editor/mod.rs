@@ -986,6 +986,7 @@ impl SharedState {
         debug!("commit {}", self.com);
         if !self.options.disable_auto_learn_phrase {
             self.auto_learn(&intervals);
+            self.learn_choices(&intervals);
         }
         let output = intervals
             .into_iter()
@@ -1019,6 +1020,20 @@ impl SharedState {
         );
         self.last_key_behavior = EditorKeyBehavior::Commit;
     }
+    /// Counts what the user picked: picked often enough, a word comes first
+    /// for its reading (see `HistoryDict::observe_choice`).
+    fn learn_choices(&mut self, intervals: &[Interval]) {
+        for (start, end, word) in picked_words(intervals, self.com.selections()) {
+            let syllables: Vec<Syllable> = self.com.symbols()[start..end]
+                .iter()
+                .map(|s| s.to_syllable().unwrap_or_default())
+                .collect();
+            if let Some(syllables) = self.reading(&syllables, &word) {
+                self.hist_dict.observe_choice(&syllables, &word);
+                self.dirty_level += 1;
+            }
+        }
+    }
     fn auto_learn(&mut self, intervals: &[Interval]) {
         let g = self.hist_dict.new_gen();
         let mut prev: Option<String> = None;
@@ -1033,6 +1048,37 @@ impl SharedState {
             self.dirty_level += 1;
         }
     }
+}
+
+/// The words picked from the candidates in `intervals`, and each run of
+/// single characters from its first pick to its last: picking 是 and then
+/// 時 makes 是時 a word, as the dictionary has none.
+fn picked_words(intervals: &[Interval], selections: &[Selection]) -> Vec<(usize, usize, String)> {
+    let picked = |it: &Interval| {
+        it.is_phrase
+            && selections
+                .iter()
+                .any(|s| s.start == it.start && s.end == it.end)
+    };
+    let mut words: Vec<_> = intervals
+        .iter()
+        .filter(|it| picked(it))
+        .map(|it| (it.start, it.end, it.text.to_string()))
+        .collect();
+    let single = |it: &Interval| it.is_phrase && it.len() == 1;
+    for run in intervals.chunk_by(|a, b| single(a) && single(b) && a.end == b.start) {
+        if let (Some(first), Some(last)) = (
+            run.iter().position(|it| picked(it)),
+            run.iter().rposition(|it| picked(it)),
+        ) && first < last
+            && last - first < SyllableVec::MAX_LEN
+        {
+            let run = &run[first..=last];
+            let text = run.iter().map(|it| &*it.text).collect();
+            words.push((run[0].start, run[run.len() - 1].end, text));
+        }
+    }
+    words
 }
 
 fn collect_new_phrases(intervals: &[Interval], symbols: &[Symbol]) -> Vec<(Vec<Syllable>, String)> {
@@ -1987,14 +2033,16 @@ impl_context_error!(pub NewEditorError);
 #[cfg(test)]
 mod tests {
     use super::BasicEditor;
-    use super::collect_new_phrases;
+    use super::{collect_new_phrases, picked_words};
+    use crate::conversion::Selection;
+    use crate::model::WordId;
     use crate::dictionary::LookupStrategy;
     use crate::dictionary::StringTable;
     use crate::dictionary::StringTableBuilder;
     use crate::editor::SymbolSelector;
     use crate::editor::{ConversionEngineKind, EditorBuilder, LanguageMode};
-    use crate::lm::StaticDictBuilder;
-    use crate::user::UserDict;
+    use crate::lm::{LoadMode, StaticDictBuilder, StaticLm, StaticLmCompiler};
+    use crate::user::{HistoryDict, UserDict};
     use crate::{
         conversion::{Interval, Symbol},
         editor::EditorKeyBehavior,
@@ -2190,6 +2238,75 @@ mod tests {
         assert_eq!(3, editor.caret());
         editor.process_keyevent(key(keycode::KEY_ESC, keysym::SYM_ESC));
         assert_eq!(3, editor.cursor());
+    }
+
+    /// One pick may be a slip, or a word wanted once: the default stays.
+    /// Picked twice, the word comes first for its reading, but not before a
+    /// phrase it would break.
+    #[test]
+    fn a_word_picked_twice_comes_first_but_keeps_phrases_whole() {
+        let mut builder = StringTableBuilder::new();
+        for word in ["冊", "測", "試", "是", "測試"] {
+            builder.insert(word);
+        }
+        let string_table = builder.build();
+        let ce4 = syl![bpmf::C, bpmf::E, bpmf::TONE4];
+        let shi4 = syl![bpmf::SH, bpmf::TONE4];
+        let mut dict_builder = StaticDictBuilder::new();
+        let mut lm = StaticLmCompiler::new();
+        let wid = |word| string_table.get_wid(word).unwrap();
+        let words = [
+            (vec![ce4], "測", -2.0),
+            (vec![ce4], "冊", -4.0),
+            (vec![shi4], "是", -2.0),
+            (vec![shi4], "試", -3.0),
+            (vec![ce4, shi4], "測試", -3.0),
+        ];
+        lm.reserve_unigrams(words.iter().map(|w| wid(w.1).0 as usize + 1).max().unwrap());
+        for (syllables, word, log10_prob) in words {
+            dict_builder.insert(&syllables, wid(word));
+            lm.insert_unigram(wid(word), log10_prob);
+        }
+        let mut buf = vec![];
+        lm.to_writer(&mut buf).unwrap();
+        let mut editor = EditorBuilder::new()
+            .string_table(string_table.clone())
+            .static_dict(dict_builder.build())
+            .static_lm(StaticLm::from_reader(buf.as_slice(), LoadMode::Eager).unwrap())
+            .history_dict(HistoryDict::new(string_table))
+            .build();
+        editor.set_editor_options(|opt| opt.sort_candidates_by_frequency = true);
+        let key = |code, ksym| KeyboardEvent::builder().code(code).ksym(ksym).build();
+        let down = key(keycode::KEY_DOWN, keysym::SYM_DOWN);
+        let enter = key(keycode::KEY_ENTER, keysym::SYM_RETURN);
+        let type_ce4 = |editor: &mut super::Editor| {
+            for ascii in *b"hk4" {
+                editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+            }
+            editor.display()
+        };
+        let pick = |editor: &mut super::Editor, word: &str| {
+            editor.process_keyevent(down);
+            let candidates = editor.all_candidates().unwrap();
+            let n = candidates.iter().position(|c| c == word).unwrap();
+            editor.select(n).unwrap();
+            editor.process_keyevent(enter);
+        };
+
+        assert_eq!("測", type_ce4(&mut editor));
+        pick(&mut editor, "冊");
+        assert_eq!("測", type_ce4(&mut editor));
+        pick(&mut editor, "冊");
+        assert_eq!("冊", type_ce4(&mut editor));
+        editor.process_keyevent(down);
+        assert_eq!("冊", editor.all_candidates().unwrap()[0]);
+        editor.process_keyevent(key(keycode::KEY_ESC, keysym::SYM_ESC));
+        editor.process_keyevent(enter);
+        // ㄘㄜˋㄕˋ is still the phrase, not 冊 and a ㄕˋ.
+        for ascii in *b"hk4g4" {
+            editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+        }
+        assert_eq!("測試", editor.display());
     }
 
     #[test]
@@ -2513,6 +2630,42 @@ mod tests {
             ],
             phrases
         );
+    }
+
+    /// Picking 是 and then 時 says 是時 is a word; a default between picks
+    /// is part of it, and the defaults around them are not.
+    #[test]
+    fn picked_words_join_single_characters_picked_in_a_run() {
+        let interval = |start, text: &str| Interval {
+            start,
+            end: start + text.chars().count(),
+            is_phrase: true,
+            text: text.into(),
+        };
+        let pick = |start, end| Selection {
+            start,
+            end,
+            wid: WordId(0),
+        };
+        let intervals = [
+            interval(0, "我"),
+            interval(1, "是"),
+            interval(2, "的"),
+            interval(3, "時"),
+            interval(4, "候"),
+            interval(5, "測試"),
+        ];
+        assert_eq!(
+            picked_words(&intervals, &[pick(1, 2), pick(3, 4), pick(5, 7)]),
+            [
+                (1, 2, "是".into()),
+                (3, 4, "時".into()),
+                (5, 7, "測試".into()),
+                (1, 4, "是的時".into())
+            ]
+        );
+        // A single pick is only itself.
+        assert_eq!(picked_words(&intervals, &[pick(3, 4)]), [(3, 4, "時".into())]);
     }
 
     #[test]

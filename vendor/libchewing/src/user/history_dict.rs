@@ -36,6 +36,18 @@ struct HistoryDictInner {
     unigram_total_last_gen: u64,
     /// prev_wid -> (total, last_gen)
     bigram_totals: BTreeMap<WordId, (f64, u64)>,
+    choices: BTreeMap<SyllableVec, Choice>,
+}
+
+/// What the user picked from the candidates for a reading. Counted apart
+/// from the unigrams: a pick says the default was wrong, which a count of
+/// what was typed, mostly defaults, would take hundreds of picks to show.
+#[derive(Debug, Default)]
+struct Choice {
+    /// Comes first among the words as long as it.
+    preferred: Option<WordId>,
+    /// Picks of other words since the preferred one changed.
+    picks: Vec<(WordId, u8)>,
 }
 
 #[derive(Debug)]
@@ -56,6 +68,11 @@ impl HistoryDict {
     pub const PRUNE_EPS: f32 = 0.25;
     pub const UNIGRAM_THRESHOLD: f64 = 500_000.0;
     pub const BIGRAM_THRESHOLD: f64 = 100_000.0;
+    /// Picks that make a word the preferred one: not one, which a slip or a
+    /// rare word once would make the default.
+    pub const PICKS_TO_PREFER: u8 = 2;
+    /// The file extension holding the choices.
+    const CHOICES_TAG: u32 = u32::from_be_bytes(*b"PICK");
 
     /// Returns an empty HistoryDict
     pub fn new(string_table: StringTable) -> HistoryDict {
@@ -69,6 +86,7 @@ impl HistoryDict {
                 unigram_total: 0.0,
                 unigram_total_last_gen: 0,
                 bigram_totals: BTreeMap::new(),
+                choices: BTreeMap::new(),
             })),
         }
     }
@@ -118,10 +136,33 @@ impl HistoryDict {
             let unigram_total_last_gen = decoder.read_u64()?;
 
             let num_extensions = decoder.read_uint()?;
-            // Ignore all unknown extensions
+            let mut choices = BTreeMap::new();
             for _ in 0..num_extensions {
-                let _tag = decoder.read_u32()?;
-                let _data = decoder.skip_data()?;
+                let tag = decoder.read_u32()?;
+                if tag != Self::CHOICES_TAG {
+                    // Ignore all unknown extensions
+                    decoder.skip_data()?;
+                    continue;
+                }
+                let data = decoder.read_data()?;
+                let mut ext = BareDecoder::new(data.as_slice());
+                for _ in 0..ext.read_uint()? {
+                    let mut syllables = SyllableVec::new();
+                    for _ in 0..ext.read_uint()? {
+                        syllables.push(Syllable::try_from(ext.read_u16()?)?);
+                    }
+                    let mut choice = Choice::default();
+                    let preferred = ext.read_data()?;
+                    if !preferred.is_empty() {
+                        choice.preferred = Some(string_table.intern(str::from_utf8(&preferred)?));
+                    }
+                    for _ in 0..ext.read_uint()? {
+                        let word = ext.read_data()?;
+                        let wid = string_table.intern(str::from_utf8(&word)?);
+                        choice.picks.push((wid, ext.read_u8()?));
+                    }
+                    choices.insert(syllables, choice);
+                }
             }
 
             let word_count = decoder.read_uint()? as u32;
@@ -194,6 +235,7 @@ impl HistoryDict {
                     unigram_total,
                     unigram_total_last_gen,
                     bigram_totals,
+                    choices,
                 })),
             })
         })
@@ -214,8 +256,30 @@ impl HistoryDict {
             encoder.write_u64(lock.generation)?;
             encoder.write_f64(lock.unigram_total)?;
             encoder.write_u64(lock.unigram_total_last_gen)?;
-            // Write 0 extensions
-            encoder.write_uint(0)?;
+            // The choices hold their words, as text: the words section comes
+            // after the extensions.
+            if lock.choices.is_empty() {
+                encoder.write_uint(0)?;
+            } else {
+                let text = |wid| lock.string_table.get_text(wid).unwrap_or_default();
+                let mut ext = BareEncoder::new(vec![]);
+                ext.write_uint(lock.choices.len() as u64)?;
+                for (syllables, choice) in &lock.choices {
+                    ext.write_uint(syllables.len() as u64)?;
+                    for syl in syllables {
+                        ext.write_u16(syl.to_u16())?;
+                    }
+                    ext.write_data(choice.preferred.map(text).unwrap_or_default().as_bytes())?;
+                    ext.write_uint(choice.picks.len() as u64)?;
+                    for &(wid, count) in &choice.picks {
+                        ext.write_data(text(wid).as_bytes())?;
+                        ext.write_u8(count)?;
+                    }
+                }
+                encoder.write_uint(1)?;
+                encoder.write_u32(Self::CHOICES_TAG)?;
+                encoder.write_data(&ext.into_inner())?;
+            }
 
             let g = lock.generation;
             let h = lock.half_life;
@@ -369,12 +433,66 @@ impl HistoryDict {
         }
     }
 
+    /// Counts a pick of `word` from the candidates for `syllables`.
+    pub(crate) fn observe_choice(&self, syllables: &[Syllable], word: &str) {
+        let mut lock = self
+            .inner
+            .write()
+            .expect("Unable to acquire HistoryDict writer lock");
+        let wid = lock.string_table.intern(word);
+        let choice = lock.choices.entry(syllables.into()).or_default();
+        if choice.preferred == Some(wid) {
+            return;
+        }
+        let count = match choice.picks.iter_mut().find(|(w, _)| *w == wid) {
+            Some((_, count)) => {
+                *count = count.saturating_add(1);
+                *count
+            }
+            None => {
+                choice.picks.push((wid, 1));
+                1
+            }
+        };
+        if count >= Self::PICKS_TO_PREFER {
+            choice.preferred = Some(wid);
+            choice.picks.clear();
+        }
+    }
+    /// The words preferred for `syllables`; a fuzzy lookup can match several
+    /// readings.
+    pub(crate) fn preferred(&self, syllables: &[Syllable], strategy: LookupStrategy) -> Vec<WordId> {
+        let lock = self
+            .inner
+            .read()
+            .expect("Unable to acquire HistoryDict reader lock");
+        match strategy {
+            LookupStrategy::Standard => lock
+                .choices
+                .get(syllables)
+                .and_then(|choice| choice.preferred)
+                .into_iter()
+                .collect(),
+            LookupStrategy::FuzzyPartialPrefix => super::fuzzy_records(&lock.choices, syllables)
+                .filter_map(|(_, choice)| choice.preferred)
+                .collect(),
+        }
+    }
     pub fn remove(&self, syllables: &[Syllable], word: &str) {
         let mut lock = self
             .inner
             .write()
             .expect("Unable to acquire UserDict writer lock");
         let wid = lock.string_table.intern(word);
+        if let Some(choice) = lock.choices.get_mut(syllables) {
+            if choice.preferred == Some(wid) {
+                choice.preferred = None;
+            }
+            choice.picks.retain(|&(w, _)| w != wid);
+            if choice.preferred.is_none() && choice.picks.is_empty() {
+                lock.choices.remove(syllables);
+            }
+        }
         let uni_entries = lock.unigrams.entry(syllables.into()).or_default();
         if let Some(pos) = uni_entries.iter().position(|e| e.wid == wid) {
             uni_entries.swap_remove(pos);
@@ -390,8 +508,13 @@ impl HistoryDict {
             .inner
             .read()
             .expect("Unable to acquire HistoryDict reader lock");
+        let choices = super::fuzzy_records(&lock.choices, syllables).flat_map(|(key, choice)| {
+            let picks = choice.picks.iter().map(|&(wid, _)| wid);
+            choice.preferred.into_iter().chain(picks).map(|wid| (key.to_vec(), wid))
+        });
         super::fuzzy_records(&lock.unigrams, syllables)
             .flat_map(|(key, entries)| entries.iter().map(|e| (key.to_vec(), e.wid)))
+            .chain(choices)
             .collect()
     }
     // Return all words and their history based unigram log10 prob
@@ -703,6 +826,40 @@ mod tests {
         restored.to_writer(&mut buffer2).unwrap();
 
         assert_eq!(buffer, buffer2, "history should serialize bit identical");
+    }
+
+    /// The second pick of another word takes over, and the choices outlive
+    /// the editor, which is made again on every focus; removing the word
+    /// (Ctrl+Delete, the dictionary editor) forgets it.
+    #[test]
+    fn choices_switch_on_the_second_pick_and_are_saved() {
+        let st = StringTable::new();
+        let yi4 = &[syl![Bopomofo::I, Bopomofo::TONE4]];
+        let hist = HistoryDict::new(st.clone());
+        let preferred = |hist: &HistoryDict| -> Vec<String> {
+            hist.preferred(yi4, LookupStrategy::Standard)
+                .into_iter()
+                .map(|wid| st.get_text(wid).unwrap())
+                .collect()
+        };
+
+        hist.observe_choice(yi4, "易");
+        assert!(preferred(&hist).is_empty());
+        hist.observe_choice(yi4, "易");
+        assert_eq!(preferred(&hist), ["易"]);
+        hist.observe_choice(yi4, "義");
+        assert_eq!(preferred(&hist), ["易"]);
+
+        let mut buffer = vec![];
+        hist.to_writer(&mut buffer).unwrap();
+        let restored = HistoryDict::from_reader(buffer.as_slice(), st.clone()).unwrap();
+        assert_eq!(preferred(&restored), ["易"]);
+        // The pick of 義 was saved too: one more makes it the preferred.
+        restored.observe_choice(yi4, "義");
+        assert_eq!(preferred(&restored), ["義"]);
+
+        restored.remove(yi4, "義");
+        assert!(preferred(&restored).is_empty());
     }
 
     #[test]

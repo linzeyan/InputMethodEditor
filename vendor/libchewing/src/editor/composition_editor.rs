@@ -100,6 +100,9 @@ impl CompositionEditor {
     pub(crate) fn symbols(&self) -> &[Symbol] {
         self.inner.symbols()
     }
+    pub(crate) fn selections(&self) -> &[Selection] {
+        self.inner.selections()
+    }
     pub(crate) fn is_empty(&self) -> bool {
         self.inner.is_empty()
     }

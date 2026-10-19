@@ -21,6 +21,8 @@ pub struct Lattice {
 pub(crate) struct Edge {
     pub(crate) end: u8,
     pub(crate) cand: Candidate,
+    /// Taken off the edge's cost, set by the decoder for preferred words.
+    pub(crate) bonus: f64,
 }
 
 impl Lattice {
@@ -54,12 +56,15 @@ impl Lattice {
                             wid,
                             hist_prob: f64::NEG_INFINITY,
                             user_pref: None,
+                            preferred: false,
                         },
+                        bonus: 0.0,
                     });
                 } else if (end - start) == 1 {
                     edges[start].push(Edge {
                         end: end as u8,
                         cand: Candidate::Grapheme(substr.to_owned()),
+                        bonus: 0.0,
                     });
                 }
             }
@@ -87,6 +92,7 @@ impl LatticeBuilder {
                     edges[start].push(Edge {
                         end: end as u8,
                         cand,
+                        bonus: 0.0,
                     });
                 }
             }
@@ -122,6 +128,7 @@ impl LatticeBuilder {
                     wid: selection.wid,
                     hist_prob: f64::NEG_INFINITY,
                     user_pref: None,
+                    preferred: false,
                 }];
             }
             if selection.intersect_range(start, end) {
