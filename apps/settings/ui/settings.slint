@@ -55,25 +55,58 @@ export struct Program {
     shown: bool,
 }
 
-// A section of a tab, for switches that touch the same keys or feature.
+// The cards' colors. Opaque: a row's card is drawn over the edge of the one
+// above, and two translucent lines there would show darker than the rest.
+global Card {
+    out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
+    out property <color> fill: self.dark ? #2B2B2B : #FFFFFF;
+    out property <color> stroke: self.dark ? #3A3A3A : #E3E3E3;
+}
+
+// A section of a tab, for switches that touch the same keys or feature; its
+// rows are on a card below it.
 component Header {
     in property <string> label;
+    in property <bool> first;
     HorizontalLayout {
-        padding-top: 12px;
-        padding-bottom: 4px;
-        spacing: 8px;
+        padding-top: root.first ? 0px : 20px;
+        padding-bottom: 8px;
+        padding-left: 4px;
         Text {
             text: root.label;
             color: Palette.foreground;
+            font-size: 15px;
+            font-weight: 600;
         }
+    }
+}
 
-        VerticalLayout {
-            alignment: center;
-            Rectangle {
-                height: 1px;
-                background: Palette.border;
-            }
-        }
+// A row on its section's card. The table is flat, so the card is drawn a row
+// at a time: rounded at the section's first and last rows, and each row's
+// edge over the next one's makes the line between them.
+component CardRow {
+    in property <bool> first;
+    in property <bool> last;
+    // A checkbox's row as tall as a drop-down's.
+    min-height: 36px;
+    Rectangle {
+        y: 0px;
+        height: parent.height + (root.last ? 0px : 1px);
+        background: Card.fill;
+        border-width: 1px;
+        border-color: Card.stroke;
+        border-top-left-radius: root.first ? 8px : 0px;
+        border-top-right-radius: root.first ? 8px : 0px;
+        border-bottom-left-radius: root.last ? 8px : 0px;
+        border-bottom-right-radius: root.last ? 8px : 0px;
+    }
+
+    HorizontalLayout {
+        padding-left: 16px;
+        padding-right: 16px;
+        padding-top: 2px;
+        padding-bottom: 2px;
+        @children
     }
 }
 
@@ -117,13 +150,11 @@ component Choice {
         box.current-index = root.item.value;
     }
     HorizontalLayout {
-        alignment: start;
         spacing: 8px;
-        padding-top: 3px;
-        padding-bottom: 3px;
         Label {
             text: root.item.label;
             enabled: root.item.enabled;
+            horizontal-stretch: 1;
         }
 
         // As wide as the longest choice, not the chosen one: the popup takes
@@ -162,13 +193,11 @@ component Spin {
         box.value = root.item.value;
     }
     HorizontalLayout {
-        alignment: start;
         spacing: 8px;
-        padding-top: 3px;
-        padding-bottom: 3px;
         Label {
             text: root.item.label;
             enabled: root.item.enabled;
+            horizontal-stretch: 1;
         }
 
         box := SpinBox {
@@ -199,14 +228,12 @@ component Field {
         }
     }
     HorizontalLayout {
-        alignment: start;
         spacing: 8px;
-        padding-top: 3px;
-        padding-bottom: 3px;
         Label {
-            width: 150px;
+            min-width: 150px;
             text: root.item.label;
             enabled: root.item.enabled;
+            horizontal-stretch: 1;
         }
 
         box := LineEdit {
@@ -232,7 +259,7 @@ component Sensitivity {
     }
     VerticalLayout {
         spacing: 4px;
-        padding-bottom: 8px;
+        padding-top: 4px;
         Text {
             text: root.item.label;
             color: Palette.foreground;
@@ -267,8 +294,6 @@ component More {
     }
     HorizontalLayout {
         alignment: start;
-        padding-top: 4px;
-        padding-bottom: 10px;
         focus := FocusScope {
             key-pressed(event) => {
                 if event.text == " " || event.text == Key.Return {
@@ -309,6 +334,7 @@ component More {
                 Text {
                     text: root.label;
                     color: Palette.foreground;
+                    vertical-alignment: center;
                 }
             }
         }
@@ -321,43 +347,53 @@ component Column {
     VerticalLayout {
         alignment: start;
         for row[index] in Settings.tables[root.table]: line := VerticalLayout {
-            property <bool> shown: !row.advanced || Settings.show-advanced;
+            property <bool> shown: row.kind == RowKind.more || !row.advanced || Settings.show-advanced;
+            // A header starts a card; the advanced rows, which follow 進階設定...
+            // to the end of their section, end it there while closed.
+            property <Row> next: Settings.tables[root.table][index + 1];
+            property <bool> first: index == 0 || Settings.tables[root.table][index - 1].kind == RowKind.header;
+            property <bool> last: index + 1 >= Settings.tables[root.table].length || line.next.kind == RowKind.header || (line.next.advanced && !Settings.show-advanced);
             if line.shown && row.kind == RowKind.header: Header {
                 label: row.label;
+                first: index == 0;
             }
-            if line.shown && row.kind == RowKind.check: Check {
-                item: row;
-                toggled(on) => {
-                    Settings.toggled(root.table, index, on);
+            if line.shown && row.kind != RowKind.header: CardRow {
+                first: line.first;
+                last: line.last;
+                if row.kind == RowKind.check: Check {
+                    item: row;
+                    toggled(on) => {
+                        Settings.toggled(root.table, index, on);
+                    }
                 }
-            }
-            if line.shown && row.kind == RowKind.choice: Choice {
-                item: row;
-                selected(choice) => {
-                    Settings.selected(root.table, index, choice);
+                if row.kind == RowKind.choice: Choice {
+                    item: row;
+                    selected(choice) => {
+                        Settings.selected(root.table, index, choice);
+                    }
                 }
-            }
-            if line.shown && row.kind == RowKind.slider: Sensitivity {
-                item: row;
-                moved(value) => {
-                    Settings.valued(root.table, index, value);
+                if row.kind == RowKind.slider: Sensitivity {
+                    item: row;
+                    moved(value) => {
+                        Settings.valued(root.table, index, value);
+                    }
                 }
-            }
-            if line.shown && row.kind == RowKind.spin: Spin {
-                item: row;
-                edited(value) => {
-                    Settings.valued(root.table, index, value);
+                if row.kind == RowKind.spin: Spin {
+                    item: row;
+                    edited(value) => {
+                        Settings.valued(root.table, index, value);
+                    }
                 }
-            }
-            if line.shown && row.kind == RowKind.text: Field {
-                item: row;
-                edited(text) => {
-                    Settings.typed(root.table, index, text);
+                if row.kind == RowKind.text: Field {
+                    item: row;
+                    edited(text) => {
+                        Settings.typed(root.table, index, text);
+                    }
                 }
-            }
-            if row.kind == RowKind.more: More {
-                label: row.label;
-                open <=> Settings.show-advanced;
+                if row.kind == RowKind.more: More {
+                    label: row.label;
+                    open <=> Settings.show-advanced;
+                }
             }
         }
     }
@@ -588,15 +624,18 @@ export component SettingsWindow inherits Window {
         tabs := TabWidget {
             Tab {
                 title: "打字行為";
-                HorizontalLayout {
-                    padding: 16px;
-                    spacing: 24px;
-                    Column {
-                        table: 0;
-                    }
+                // Rows grow taller than the window on a small screen.
+                ScrollView {
+                    HorizontalLayout {
+                        padding: 16px;
+                        spacing: 24px;
+                        Column {
+                            table: 0;
+                        }
 
-                    Column {
-                        table: 1;
+                        Column {
+                            table: 1;
+                        }
                     }
                 }
             }
@@ -664,22 +703,25 @@ export component SettingsWindow inherits Window {
 
             Tab {
                 title: "界面外觀";
-                VerticalLayout {
-                    padding: 16px;
-                    alignment: start;
-                    Column {
-                        table: 2;
-                    }
-
-                    HorizontalLayout {
+                // Rows grow taller than the window on a small screen.
+                ScrollView {
+                    VerticalLayout {
+                        padding: 16px;
                         alignment: start;
-                        spacing: 24px;
                         Column {
-                            table: 3;
+                            table: 2;
                         }
 
-                        Column {
-                            table: 4;
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 24px;
+                            Column {
+                                table: 3;
+                            }
+
+                            Column {
+                                table: 4;
+                            }
                         }
                     }
                 }
@@ -687,37 +729,43 @@ export component SettingsWindow inherits Window {
 
             Tab {
                 title: "鍵盤設定";
-                VerticalLayout {
-                    padding: 16px;
-                    alignment: start;
-                    Column {
-                        table: 5;
+                // Rows grow taller than the window on a small screen.
+                ScrollView {
+                    VerticalLayout {
+                        padding: 16px;
+                        alignment: start;
+                        Column {
+                            table: 5;
+                        }
                     }
                 }
             }
 
             Tab {
                 title: "拼音";
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 8px;
-                    alignment: start;
-                    Column {
-                        table: 6;
-                    }
-
-                    Help {
-                        text: "模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong 也有「中」。只在拼音模式作用。";
-                    }
-
-                    HorizontalLayout {
-                        spacing: 24px;
+                // Rows grow taller than the window on a small screen.
+                ScrollView {
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
+                        alignment: start;
                         Column {
-                            table: 7;
+                            table: 6;
                         }
 
-                        Column {
-                            table: 8;
+                        Help {
+                            text: "模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong 也有「中」。只在拼音模式作用。";
+                        }
+
+                        HorizontalLayout {
+                            spacing: 24px;
+                            Column {
+                                table: 7;
+                            }
+
+                            Column {
+                                table: 8;
+                            }
                         }
                     }
                 }
@@ -873,41 +921,44 @@ export component SettingsWindow inherits Window {
 
             Tab {
                 title: "更新與記錄";
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 8px;
-                    alignment: start;
-                    Column {
-                        table: 9;
-                    }
-
-                    HorizontalLayout {
+                // Rows grow taller than the window on a small screen.
+                ScrollView {
+                    VerticalLayout {
+                        padding: 16px;
+                        spacing: 8px;
                         alignment: start;
-                        spacing: 12px;
-                        padding-top: 16px;
-                        Button {
-                            text: "立即檢查更新";
-                            enabled: !root.checking;
-                            clicked => {
-                                root.check-update();
+                        Column {
+                            table: 9;
+                        }
+
+                        HorizontalLayout {
+                            alignment: start;
+                            spacing: 12px;
+                            padding-top: 16px;
+                            Button {
+                                text: "立即檢查更新";
+                                enabled: !root.checking;
+                                clicked => {
+                                    root.check-update();
+                                }
+                            }
+
+                            Label {
+                                text: root.update-status;
                             }
                         }
 
-                        Label {
-                            text: root.update-status;
+                        Column {
+                            table: 10;
                         }
-                    }
 
-                    Column {
-                        table: 10;
-                    }
-
-                    HorizontalLayout {
-                        alignment: start;
-                        Button {
-                            text: "開啟記錄檔資料夾";
-                            clicked => {
-                                root.open-log-dir();
+                        HorizontalLayout {
+                            alignment: start;
+                            Button {
+                                text: "開啟記錄檔資料夾";
+                                clicked => {
+                                    root.open-log-dir();
+                                }
                             }
                         }
                     }
