@@ -173,9 +173,9 @@ Windows 10／11 x64。在 ARM64 版 Windows 上只能用於 x64／x86 程式。
 
 ## 問題記錄
 
-輸入法把錯誤與警告寫在 `%AppData%\InputMethodEditor\ime.log`（超過 1 MB 時舊的改名成 `ime.old.log`）。
+輸入法把錯誤與警告寫在 `%AppData%\InputMethodEditor\ime-<日期>.log`，一天一個檔（太大時接著寫 `ime-<日期>.1.log`…），保留 14 天、總共最多 100 MB。
 要回報問題時，在「設定 → 更新與記錄」把「記錄等級」調高（info 記狀態變化，debug 再加上按鍵與打出的字，trace 全部），
-按「套用」後重現問題，再按「開啟記錄檔資料夾」附上記錄檔。用完請改回 warn。
+按「套用」後重現問題，再按「開啟記錄檔資料夾」附上發生問題那天的記錄檔。用完請改回 warn。
 
 ## 移除
 

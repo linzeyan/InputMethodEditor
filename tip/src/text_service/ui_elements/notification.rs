@@ -15,7 +15,7 @@ use windows::Win32::{
     Graphics::{
         Direct2D::{
             Common::{D2D_RECT_F, D2D1_COLOR_F},
-            D2D1_DRAW_TEXT_OPTIONS_NONE, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1CreateFactory,
+            D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_FACTORY_TYPE_SINGLE_THREADED, D2D1CreateFactory,
             ID2D1DeviceContext, ID2D1Factory1,
         },
         DirectComposition::IDCompositionTarget,
@@ -333,7 +333,7 @@ impl View {
                         &text_format,
                         &text_rect,
                         &brush,
-                        D2D1_DRAW_TEXT_OPTIONS_NONE,
+                        D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                         DWRITE_MEASURING_MODE_NATURAL,
                     );
                     if let Some(caret) = model.caret {

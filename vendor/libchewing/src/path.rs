@@ -6,7 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use log::{debug, warn};
+use log::{trace, warn};
 
 #[cfg(target_family = "windows")]
 const DEFAULT_SYS_PATH: &str = "C:\\Program Files\\ChewingTextService\\Dictionary";
@@ -44,7 +44,7 @@ impl SearchPath {
     pub fn from_env() -> SearchPath {
         let chewing_path = env::var("CHEWING_PATH");
         let sys_path = if let Ok(chewing_path) = chewing_path {
-            debug!("Add paths from CHEWING_PATH: {}", chewing_path);
+            trace!("Add paths from CHEWING_PATH: {}", chewing_path);
             chewing_path
         } else {
             SYS_PATH.unwrap_or(DEFAULT_SYS_PATH).to_string()
@@ -73,7 +73,7 @@ impl SearchPath {
     pub fn from_user_path_and_env(user_path: &str) -> SearchPath {
         let chewing_path = env::var("CHEWING_PATH");
         let sys_path = if let Ok(chewing_path) = chewing_path {
-            debug!("Add paths from CHEWING_PATH: {}", chewing_path);
+            trace!("Add paths from CHEWING_PATH: {}", chewing_path);
             chewing_path
         } else {
             SYS_PATH.unwrap_or(DEFAULT_SYS_PATH).to_string()
@@ -103,12 +103,12 @@ impl SearchPath {
 
     pub fn find_file(&self, name: &str) -> Option<PathBuf> {
         for prefix in &self.paths {
-            debug!("Search files in {}", prefix.display());
+            trace!("Search files in {}", prefix.display());
             if let Ok(read_dir) = prefix.read_dir() {
                 for entry in read_dir.flatten() {
                     let file_path = entry.path();
                     if file_path.is_file() && file_path.ends_with(name) {
-                        debug!("Found {}", file_path.display());
+                        trace!("Found {}", file_path.display());
                         return Some(file_path.to_path_buf());
                     }
                 }
@@ -120,7 +120,7 @@ impl SearchPath {
     pub fn find_user_file(&self, name: &str) -> Option<PathBuf> {
         let file_path = self.user_file_path(name)?;
         if file_path.is_file() && file_path.ends_with(name) {
-            debug!("Found {}", file_path.display());
+            trace!("Found {}", file_path.display());
             return Some(file_path.to_path_buf());
         }
         None
@@ -159,20 +159,20 @@ impl SearchPath {
 /// Users can set the `CHEWING_USER_PATH` environment variable to
 /// override the default path.
 pub fn data_dir() -> Option<PathBuf> {
-    debug!("Query user data path...");
+    trace!("Query user data path...");
     if let Ok(path) = env::var("CHEWING_USER_PATH") {
-        debug!("Found CHEWING_USER_PATH: {}", path);
+        trace!("Found CHEWING_USER_PATH: {}", path);
         return Some(path.into());
     }
     if let Some(path) = legacy_data_dir() {
         if file_exists(&path) && path.is_dir() {
-            debug!("Found legacy userpath: {}", path.display());
+            trace!("Found legacy userpath: {}", path.display());
             return Some(path);
         }
     }
     let data_dir = project_data_dir();
     if let Some(path) = &data_dir {
-        debug!("Use default userpath: {}", path.display());
+        trace!("Use default userpath: {}", path.display());
     } else {
         warn!("No valid home directory path could be retrieved from the operating system.");
     }

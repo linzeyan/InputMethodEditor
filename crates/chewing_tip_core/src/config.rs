@@ -121,7 +121,7 @@ pub struct ChewingTsfConfig {
     pub update_check_days: i32,
     /// Also looks once after each logon, however long since the last time.
     pub check_update_at_logon: bool,
-    /// The least severe level the text service writes to ime.log: error,
+    /// The least severe level the text service writes to its log: error,
     /// warn, info, debug or trace. Debug and below record the text typed.
     pub log_level: String,
     pub modified_timestamp: u64,

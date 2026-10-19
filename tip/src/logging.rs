@@ -5,10 +5,12 @@ use std::{
     fmt::Write as _,
     fs::{self, OpenOptions},
     io::Write as _,
+    path::Path,
     sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicU8, Ordering},
     },
+    time::SystemTime,
 };
 
 use chewing_tip_core::shell::user_dir;
@@ -52,16 +54,25 @@ impl Append for WinDbg {
     }
 }
 
-/// Above this ime.log is moved to ime.old.log, so the two stay under 2 MiB.
-const MAX_LOG_SIZE: u64 = 1 << 20;
+/// Days of logs kept: a problem is often noticed, or reported, days later.
+const KEEP_DAYS: u64 = 14;
+/// All the logs together; trace fills a day fast, and the oldest go first.
+const MAX_TOTAL_SIZE: u64 = 100 << 20;
+/// A day's file above this goes on in ime-<date>.1.log, .2 and so on, so
+/// that the total limit drops part of a day, not all of it.
+const MAX_FILE_SIZE: u64 = 16 << 20;
 
 /// The level the user chose; the debugger may lower `log::max_level` below it.
 static FILE_LEVEL: AtomicU8 = AtomicU8::new(Level::Warn as u8);
 
-/// Appends to `%AppData%\InputMethodEditor\ime.log`, the log a user can
-/// send. Every process with a text field loads the text service, so the
+/// The day being written and its part, to clean up when the day changes.
+static CURRENT: Mutex<Option<((u16, u16, u16), u32)>> = Mutex::new(None);
+
+/// Appends to `%AppData%\InputMethodEditor\ime-<date>.log`, the log a user
+/// can send. Every process with a text field loads the text service, so the
 /// file is opened for each record rather than held: appends from many
-/// processes then interleave whole lines, and any of them can rotate it.
+/// processes then interleave whole lines. A file per day is never renamed,
+/// so no process moves a file another is about to append to.
 #[derive(Debug)]
 pub(crate) struct FileLog;
 
@@ -73,13 +84,25 @@ impl Append for FileLog {
         let Ok(dir) = user_dir() else {
             return Ok(());
         };
-        let path = dir.join("ime.log");
-        // ponytail: two processes rotating at once lose one ime.old.log;
-        // a lock file if the log ever needs to be complete.
-        if fs::metadata(&path).is_ok_and(|m| m.len() > MAX_LOG_SIZE) {
-            let _ = fs::rename(&path, dir.join("ime.old.log"));
-        }
         let t = unsafe { GetLocalTime() };
+        let day = (t.wYear, t.wMonth, t.wDay);
+        let path = {
+            let mut current = CURRENT.lock().unwrap_or_else(|e| e.into_inner());
+            let mut part = match *current {
+                Some((d, part)) if d == day => part,
+                _ => {
+                    clean_up(&dir, KEEP_DAYS * 24 * 60 * 60, MAX_TOTAL_SIZE);
+                    0
+                }
+            };
+            let mut path = dir.join(log_name(day, part));
+            while fs::metadata(&path).is_ok_and(|m| m.len() > MAX_FILE_SIZE) {
+                part += 1;
+                path = dir.join(log_name(day, part));
+            }
+            *current = Some((day, part));
+            path
+        };
         let mut line = format!(
             "{}-{:02}-{:02} {:02}:{:02}:{:02}.{:03} {} {} {:>5} {}: {}:{} {}",
             t.wYear,
@@ -107,6 +130,49 @@ impl Append for FileLog {
     }
     fn flush(&self) -> Result<(), Error> {
         Ok(())
+    }
+}
+
+fn log_name((year, month, day): (u16, u16, u16), part: u32) -> String {
+    match part {
+        0 => format!("ime-{year}-{month:02}-{day:02}.log"),
+        _ => format!("ime-{year}-{month:02}-{day:02}.{part}.log"),
+    }
+}
+
+/// Deletes the logs older than `keep_secs`, then the oldest beyond
+/// `max_total`, and the ime.log and ime.old.log written before there was a
+/// file per day. Other processes may be deleting the same files.
+fn clean_up(dir: &Path, keep_secs: u64, max_total: u64) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let now = SystemTime::now();
+    let mut kept = vec![];
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.starts_with("ime") || !name.ends_with(".log") {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
+        let modified = meta.modified().unwrap_or(now);
+        let age = now.duration_since(modified).unwrap_or_default();
+        if !name.starts_with("ime-") || age.as_secs() > keep_secs {
+            let _ = fs::remove_file(entry.path());
+        } else {
+            kept.push((modified, meta.len(), entry.path()));
+        }
+    }
+    kept.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut total = 0;
+    for (_, len, path) in kept {
+        total += len;
+        if total > max_total {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
@@ -154,4 +220,62 @@ pub(crate) fn output_debug_string(text: &str) {
 
 pub(crate) fn is_debugger_present() -> bool {
     unsafe { IsDebuggerPresent().as_bool() }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    /// A problem is reported days after it happened, so the days before stay;
+    /// what is too old, or over the limit, goes oldest first, and nothing but
+    /// the text service's own logs is touched.
+    #[test]
+    fn clean_up_keeps_recent_days_within_the_limit() {
+        let dir = std::env::temp_dir().join(format!("ime-log-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let day = 24 * 60 * 60;
+        let write = |name: &str, days_ago: u64, len: usize| {
+            let path = dir.join(name);
+            fs::write(&path, vec![b'x'; len]).unwrap();
+            let file = fs::File::options().write(true).open(&path).unwrap();
+            let when = SystemTime::now() - Duration::from_secs(days_ago * day + 60);
+            file.set_modified(when).unwrap();
+        };
+        write("ime-2026-10-19.log", 0, 10);
+        write("ime-2026-10-18.1.log", 1, 10);
+        write("ime-2026-10-18.log", 1, 10);
+        write("ime-2026-10-10.log", 9, 10);
+        write("ime-2026-09-01.log", 48, 10);
+        write("ime.log", 0, 10);
+        write("ime.old.log", 1, 10);
+        write("update.log", 48, 10);
+
+        clean_up(&dir, 14 * day, 35);
+
+        let mut left: Vec<_> = fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        let _ = fs::remove_dir_all(&dir);
+        // 2026-10-10 is within the days kept but over the 35 bytes.
+        assert_eq!(
+            left,
+            [
+                "ime-2026-10-18.1.log",
+                "ime-2026-10-18.log",
+                "ime-2026-10-19.log",
+                "update.log"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_day_goes_on_in_numbered_parts() {
+        assert_eq!(log_name((2026, 10, 9), 0), "ime-2026-10-09.log");
+        assert_eq!(log_name((2026, 10, 9), 2), "ime-2026-10-09.2.log");
+    }
 }

@@ -554,7 +554,7 @@ const LOG: &[Spec] = &[
         ..check(
             "log_level",
             "記錄等級：",
-            r"輸入法把發生的事記在 %AppData%\InputMethodEditor\ime.log，超過 1 MB 換到 ime.old.log；回報問題時附上這兩個檔。debug 和 trace 會記下每個按鍵和打出的字，找到問題後請改回 warn。",
+            r"輸入法把發生的事記在 %AppData%\InputMethodEditor\ime-<日期>.log，一天一個檔，保留 14 天、總共最多 100 MB；回報問題時附上發生問題那天的檔。debug 和 trace 會記下每個按鍵和打出的字，找到問題後請改回 warn。",
         )
     },
 ];
