@@ -255,7 +255,7 @@ impl ChewingTextService {
     }
 
     pub(super) fn on_thread_focus(&mut self) -> Result<()> {
-        let _ = self.engine.cfg.reload_if_needed();
+        let _ = self.engine.reload_config();
         let ui = Tsf {
             ui: &mut self.ui,
             context: None,

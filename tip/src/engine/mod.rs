@@ -37,7 +37,7 @@ use chewing::input::keysym::{
 };
 use chewing::input::{KeyState, KeyboardEvent, keycode, keysym};
 use chewing::zhuyin::{Bopomofo, Syllable, set_fuzzy_sounds};
-use chewing_tip_core::config::{ChewingTsfConfig, Config, KeybindValue};
+use chewing_tip_core::config::{ChewingTsfConfig, Config, ConfigError, KeybindValue};
 use chewing_tip_core::phrases::{self, PHRASES_FILE};
 use chewing_tip_core::shell::{open_url, share_user_dir, user_dir};
 use chewing_tip_core::{PRODUCT_NAME, SETTINGS_SCHEME};
@@ -1086,6 +1086,12 @@ impl Engine {
             let bar = match &self.composition_bar {
                 Some(bar) => bar.clone(),
                 None => {
+                    // With the save it follows, against the setting reported
+                    // off: a stale config shows an older time.
+                    info!(
+                        "composition bar opened, config saved at {}",
+                        self.cfg.chewing_tsf.modified_timestamp
+                    );
                     let bar = Notification::new(ui.popup_parent()?, ui.thread_mgr())?;
                     self.composition_bar = Some(bar.clone());
                     bar
@@ -1462,8 +1468,24 @@ impl Engine {
         Ok(editor)
     }
 
+    /// Reads the config again, telling whether it changed.
+    pub(crate) fn reload_config(&mut self) -> Result<bool, ConfigError> {
+        let bar = self.cfg.chewing_tsf.composition_bar;
+        let changed = self.cfg.reload_if_needed()?;
+        // Reported turning on by itself: the time tells which save did it.
+        let cfg = &self.cfg.chewing_tsf;
+        if cfg.composition_bar != bar {
+            info!(
+                "composition bar {}, saved at {}",
+                if cfg.composition_bar { "on" } else { "off" },
+                cfg.modified_timestamp
+            );
+        }
+        Ok(changed)
+    }
+
     fn apply_config_if_changed(&mut self, ui: &impl Frontend) -> Result<()> {
-        if self.cfg.reload_if_needed()? {
+        if self.reload_config()? {
             self.apply_runtime_config(ui)?;
         }
         Ok(())
