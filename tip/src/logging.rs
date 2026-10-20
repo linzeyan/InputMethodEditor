@@ -61,6 +61,9 @@ const MAX_TOTAL_SIZE: u64 = 100 << 20;
 /// A day's file above this goes on in ime-<date>.1.log, .2 and so on, so
 /// that the total limit drops part of a day, not all of it.
 const MAX_FILE_SIZE: u64 = 16 << 20;
+/// How long ime.log and ime.old.log, from before a file a day, stay unwritten
+/// before they are deleted.
+const LEGACY_KEEP_SECS: u64 = 24 * 60 * 60;
 
 /// The level the user chose; the debugger may lower `log::max_level` below it.
 static FILE_LEVEL: AtomicU8 = AtomicU8::new(Level::Warn as u8);
@@ -92,7 +95,9 @@ impl Append for FileLog {
                 Some((d, part)) if d == day => part,
                 _ => {
                     clean_up(&dir, KEEP_DAYS * 24 * 60 * 60, MAX_TOTAL_SIZE);
-                    0
+                    // Not from 0: the total limit may have deleted the day's
+                    // first parts, which a process starting there made again.
+                    last_part(&dir, day)
                 }
             };
             let mut path = dir.join(log_name(day, part));
@@ -140,6 +145,28 @@ fn log_name((year, month, day): (u16, u16, u16), part: u32) -> String {
     }
 }
 
+/// The highest part of `day` in `dir`, 0 when there is none.
+fn last_part(dir: &Path, day: (u16, u16, u16)) -> u32 {
+    let first = log_name(day, 0);
+    let stem = first.trim_end_matches(".log");
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let rest = name.strip_prefix(stem)?.strip_suffix(".log")?;
+            match rest {
+                "" => Some(0),
+                _ => rest.strip_prefix('.')?.parse().ok(),
+            }
+        })
+        .max()
+        .unwrap_or(0)
+}
+
 /// Deletes the logs older than `keep_secs`, then the oldest beyond
 /// `max_total`, and the ime.log and ime.old.log written before there was a
 /// file per day. Other processes may be deleting the same files.
@@ -160,7 +187,14 @@ fn clean_up(dir: &Path, keep_secs: u64, max_total: u64) {
         };
         let modified = meta.modified().unwrap_or(now);
         let age = now.duration_since(modified).unwrap_or_default();
-        if !name.starts_with("ime-") || age.as_secs() > keep_secs {
+        if !name.starts_with("ime-") {
+            // A program started before an update still runs the old DLL and
+            // writes ime.log: deleted at once, every process starting made
+            // it again. Left a day, it goes once those programs are closed.
+            if age.as_secs() > LEGACY_KEEP_SECS {
+                let _ = fs::remove_file(entry.path());
+            }
+        } else if age.as_secs() > keep_secs {
             let _ = fs::remove_file(entry.path());
         } else {
             kept.push((modified, meta.len(), entry.path()));
@@ -261,13 +295,16 @@ mod tests {
             .collect();
         left.sort();
         let _ = fs::remove_dir_all(&dir);
-        // 2026-10-10 is within the days kept but over the 35 bytes.
+        // 2026-10-10 is within the days kept but over the 35 bytes. ime.log,
+        // written just now by a program still on the old DLL, stays: deleted,
+        // that program would make it again for the next process to delete.
         assert_eq!(
             left,
             [
                 "ime-2026-10-18.1.log",
                 "ime-2026-10-18.log",
                 "ime-2026-10-19.log",
+                "ime.log",
                 "update.log"
             ]
         );
@@ -277,5 +314,28 @@ mod tests {
     fn a_day_goes_on_in_numbered_parts() {
         assert_eq!(log_name((2026, 10, 9), 0), "ime-2026-10-09.log");
         assert_eq!(log_name((2026, 10, 9), 2), "ime-2026-10-09.2.log");
+    }
+
+    /// A process starting late in a day writes after the other processes,
+    /// even once the total limit deleted the day's first parts: starting
+    /// from part 0, it made that file again.
+    #[test]
+    fn a_process_goes_on_from_the_days_last_part() {
+        let dir = std::env::temp_dir().join(format!("ime-part-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "ime-2026-10-19.12.log",
+            "ime-2026-10-20.3.log",
+            "ime-2026-10-20.11.log",
+            "ime-2026-10-20.x.log",
+            "update.log",
+        ] {
+            fs::write(dir.join(name), "x").unwrap();
+        }
+        let today = last_part(&dir, (2026, 10, 20));
+        let tomorrow = last_part(&dir, (2026, 10, 21));
+        let _ = fs::remove_dir_all(&dir);
+        assert_eq!((today, tomorrow), (11, 0));
     }
 }
