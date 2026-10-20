@@ -3,17 +3,12 @@
 use std::fs::File;
 use std::io::Write;
 
-use jiff::Zoned;
 use scoped_error::{Error, expect_error};
 
 use super::flags::UpdateVersion;
 
 pub(super) fn update_version(flags: UpdateVersion) -> Result<(), Error> {
     expect_error("Failed to update version", || {
-        let now = Zoned::now();
-        let year = now.year();
-        let month = now.month();
-        let day = now.day();
         let yy = flags.major;
         let mm = flags.minor;
         let rv = flags.patch;
@@ -26,10 +21,6 @@ pub(super) fn update_version(flags: UpdateVersion) -> Result<(), Error> {
             #define VER_FILEVERSION_STR         "{yy}.{mm}.{rv}.{bn}\0"
             #define VER_PRODUCTVERSION          {yy},{mm},{rv},{bn}
             #define VER_PRODUCTVERSION_STR      "{yy}.{mm}.{rv}.{bn}\0"
-            #define ABOUT_CAPTION_WITH_VER      "關於新酷音輸入法 ({yy}.{mm}.{rv}.{bn})\0"
-            #define ABOUT_VERSION_STR           "版本：{yy}.{mm}.{rv}.{bn}\0"
-            #define ABOUT_RELEASE_DATE_STR      "發行日期：{year} 年 {month:02} 月 {day:02} 日\0"
-            #define PREFS_TITLE_WITH_VER        "設定新酷音輸入法 ({yy}.{mm}.{rv}.{bn})\0"
         "#
         )?;
         Ok(())

@@ -30,7 +30,7 @@ use chewing_tip_core::shell::user_dir;
 use slint::{ComponentHandle, ModelRc, StandardListViewItem, Timer, TimerMode, VecModel};
 
 use crate::{
-    DictionaryWindow, VERSION, center_when_made, error_box, open_file, save_file, show_about,
+    DictionaryWindow, VERSION, bring_forward, center_when_made, error_box, open_file, save_file,
 };
 
 const USER_DICT: &str = "user_dict.csv";
@@ -336,6 +336,10 @@ impl Editor {
 }
 
 pub(crate) fn run() -> Result<(), slint::PlatformError> {
+    // As the window's title.
+    if bring_forward(&format!("InputMethodEditor 使用者詞庫 ({VERSION})")) {
+        return Ok(());
+    }
     let ui = DictionaryWindow::new()?;
     ui.set_version(VERSION.into());
     let entries = load().unwrap_or_else(|error| {
@@ -501,12 +505,7 @@ pub(crate) fn run() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    ui.on_about({
-        let ui = ui.as_weak();
-        move || show_about(ui.unwrap().window())
-    });
     ui.window().on_close_requested(|| {
-        // The about box closes with it.
         let _ = slint::quit_event_loop();
         slint::CloseRequestResponse::HideWindow
     });

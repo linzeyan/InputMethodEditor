@@ -14,7 +14,7 @@ use std::sync::OnceLock;
 use std::thread;
 
 use chewing_tip_core::config::{ChewingTsfConfig, Config};
-use chewing_tip_core::shell::user_dir;
+use chewing_tip_core::shell::{open_url, user_dir};
 use serde_json::{Value, json};
 use slint::{
     ComponentHandle, Image, Model, ModelRc, Rgba8Pixel, SharedPixelBuffer, SharedString,
@@ -23,8 +23,8 @@ use slint::{
 
 use crate::fonts::{FontFamilyName, system_fonts};
 use crate::{
-    Keybind, Program, Row, RowKind, Settings, SettingsWindow, VERSION, ask, center_when_made,
-    config, error_box, follow_candidates, open_file, programs, save_file, show_about, update,
+    Keybind, Program, Row, RowKind, Settings, SettingsWindow, VERSION, ask, bring_forward,
+    center_when_made, config, error_box, follow_candidates, open_file, programs, save_file, update,
 };
 
 enum Kind {
@@ -53,7 +53,7 @@ struct Spec {
     key: &'static str,
     label: &'static str,
     hint: &'static str,
-    /// Shown only with 進階設定... open.
+    /// Shown only with 進階設定 open.
     advanced: bool,
     /// Off while that setting is so, as when it takes this one's place.
     disabled_when: Option<(&'static str, bool)>,
@@ -84,7 +84,7 @@ const fn check(key: &'static str, label: &'static str, hint: &'static str) -> Sp
 const fn more() -> Spec {
     Spec {
         kind: Kind::More,
-        ..header("進階設定...")
+        ..header("進階設定")
     }
 }
 
@@ -133,7 +133,7 @@ const TYPING_LEFT: &[Spec] = &[
     .disabled_when("enable_caps_lock", true),
     check(
         "show_notification",
-        "顯示中/英切換通知訊息",
+        "顯示中／英切換通知訊息",
         "切換中文／英文、正體／簡體、注音／拼音時，短暫顯示一個小視窗告訴你現在的模式。",
     ),
     more(),
@@ -273,7 +273,7 @@ const TYPING_RIGHT: &[Spec] = &[
     check(
         "add_phrase_forward",
         "Ctrl + 數字儲存游標前方的詞",
-        "組字中按 Ctrl＋2～9，把游標前面的 2～9 個字加入使用者詞庫，之後就能整個詞一起打出來；不勾選則是游標後面的字。例如打完「新酷音輸入法」按 Ctrl＋3，加入「輸入法」。",
+        "組字中按 Ctrl＋2～9，把游標前面的 2～9 個字加入使用者詞庫，之後就能整個詞一起打出來；不勾選則是游標後面的字。例如打完「中文輸入法」按 Ctrl＋3，加入「輸入法」。",
     ),
     check(
         "enable_auto_learn",
@@ -299,7 +299,7 @@ const APPEARANCE: &[Spec] = &[
         kind: Kind::Spin(1, 10),
         ..check(
             "cand_per_row",
-            "每列顯示後選字個數：",
+            "每列顯示候選字個數：",
             "選字視窗每一列排幾個候選，排不下的換到下一列。設為 1 就是直的一排。",
         )
     },
@@ -307,7 +307,7 @@ const APPEARANCE: &[Spec] = &[
         kind: Kind::Spin(1, 10),
         ..check(
             "cand_per_page",
-            "每頁顯示後選字個數：",
+            "每頁顯示候選字個數：",
             "選字視窗一頁最多幾個候選，其餘的要翻頁；也決定用到幾個選字鍵。",
         )
     },
@@ -534,6 +534,7 @@ const FUZZY_FINALS: &[Spec] = &[
 ];
 
 const UPDATE: &[Spec] = &[
+    header("更新"),
     check(
         "check_update",
         "自動檢查更新",
@@ -590,7 +591,7 @@ const TABLES: [&[Spec]; 11] = [
 ];
 
 /// The tables on each tab, which its reset puts back.
-const TAB_TABLES: [&[usize]; 10] = [
+const TAB_TABLES: [&[usize]; 11] = [
     &[0, 1],
     &[],
     &[2, 3, 4],
@@ -600,7 +601,8 @@ const TAB_TABLES: [&[usize]; 10] = [
     &[],
     &[],
     &[],
-    &[9, 10],
+    &[10],
+    &[9],
 ];
 const KEYBIND_TAB: i32 = 5;
 const SYMBOLS_TAB: i32 = 6;
@@ -938,6 +940,10 @@ fn save(ui: &SettingsWindow, draft: &Draft) -> bool {
 }
 
 pub(crate) fn run() -> Result<(), slint::PlatformError> {
+    // As the window's title.
+    if bring_forward(&format!("InputMethodEditor 設定 ({VERSION})")) {
+        return Ok(());
+    }
     let loaded = match config::load_config() {
         Ok(config) => config,
         Err(error) => {
@@ -1320,10 +1326,7 @@ pub(crate) fn run() -> Result<(), slint::PlatformError> {
             }
         }
     });
-    ui.on_about({
-        let ui = ui.as_weak();
-        move || show_about(ui.unwrap().window())
-    });
+    ui.on_open_url(|url| open_url(&url));
     ui.on_ok({
         let (ui, draft) = (ui.as_weak(), draft.clone());
         move || {
@@ -1344,7 +1347,6 @@ pub(crate) fn run() -> Result<(), slint::PlatformError> {
         }
     });
     ui.window().on_close_requested(|| {
-        // The about box closes with it.
         let _ = slint::quit_event_loop();
         slint::CloseRequestResponse::HideWindow
     });

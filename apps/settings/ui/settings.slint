@@ -2,8 +2,7 @@
 //
 // SPDX-License-Identifier: GPL-3.0-or-later
 
-import { Button, CheckBox, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider, SpinBox, Spinner, TabWidget, TextEdit } from "std-widgets.slint";
-export { AboutWindow } from "about.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ListView, Palette, ScrollView, Slider, SpinBox, Spinner, TextEdit } from "std-widgets.slint";
 export { DictionaryWindow } from "dictionary.slint";
 
 export enum RowKind { header, check, choice, slider, spin, text, more }
@@ -61,6 +60,9 @@ global Card {
     out property <bool> dark: Palette.color-scheme == ColorScheme.dark;
     out property <color> fill: self.dark ? #2B2B2B : #FFFFFF;
     out property <color> stroke: self.dark ? #3A3A3A : #E3E3E3;
+    // Under the pointer, and pressed: a tab, which has no card.
+    out property <color> hover: self.dark ? #FFFFFF0F : #0000000A;
+    out property <color> pressed: self.dark ? #FFFFFF08 : #00000006;
 }
 
 // A section of a tab, for switches that touch the same keys or feature; its
@@ -281,7 +283,7 @@ component Sensitivity {
     }
 }
 
-// 進階設定..., showing the rows marked advanced; it opens from the keyboard too.
+// 進階設定, showing the rows marked advanced; it opens from the keyboard too.
 component More {
     in property <string> label;
     in-out property <bool> open;
@@ -344,18 +346,21 @@ component More {
 // The rows of one table in Settings.tables.
 component Column {
     in property <int> table;
+    // Below other content on the page: its first section keeps the gap
+    // above a section.
+    in property <bool> follows;
     VerticalLayout {
         alignment: start;
         for row[index] in Settings.tables[root.table]: line := VerticalLayout {
             property <bool> shown: row.kind == RowKind.more || !row.advanced || Settings.show-advanced;
-            // A header starts a card; the advanced rows, which follow 進階設定...
+            // A header starts a card; the advanced rows, which follow 進階設定
             // to the end of their section, end it there while closed.
             property <Row> next: Settings.tables[root.table][index + 1];
             property <bool> first: index == 0 || Settings.tables[root.table][index - 1].kind == RowKind.header;
             property <bool> last: index + 1 >= Settings.tables[root.table].length || line.next.kind == RowKind.header || (line.next.advanced && !Settings.show-advanced);
             if line.shown && row.kind == RowKind.header: Header {
                 label: row.label;
-                first: index == 0;
+                first: index == 0 && !root.follows;
             }
             if line.shown && row.kind != RowKind.header: CardRow {
                 first: line.first;
@@ -537,6 +542,118 @@ component PickRow {
     }
 }
 
+// A tab of TabBar.
+component TabButton {
+    in property <string> title;
+    in property <bool> current;
+    in property <bool> focused;
+    callback clicked();
+    accessible-role: tab;
+    accessible-label: root.title;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.current;
+    accessible-action-default => {
+        root.clicked();
+    }
+    min-height: 34px;
+    horizontal-stretch: 0;
+    // Opening into the page: the bottom edge is clipped off, and the fill
+    // covers the line the other tabs stand on.
+    if root.current: Rectangle {
+        clip: true;
+        Rectangle {
+            y: 0px;
+            height: parent.height + 8px;
+            background: Card.fill;
+            border-width: 1px;
+            border-color: Card.stroke;
+            border-radius: 6px;
+        }
+    }
+    // Inset, clear of the tabs beside it.
+    if !root.current && (touch.has-hover || touch.pressed): Rectangle {
+        x: 2px;
+        y: 4px;
+        width: parent.width - 4px;
+        height: parent.height - 9px;
+        border-radius: 4px;
+        background: touch.pressed ? Card.pressed : Card.hover;
+    }
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        Text {
+            text: root.title;
+            color: Palette.foreground;
+            opacity: root.current ? 1 : 0.75;
+            font-weight: root.current ? 600 : 400;
+            vertical-alignment: center;
+        }
+    }
+
+    if root.focused: Rectangle {
+        x: 2px;
+        y: 3px;
+        width: parent.width - 4px;
+        height: parent.height - 6px;
+        border-radius: 4px;
+        border-width: 2px;
+        border-color: Palette.foreground;
+    }
+}
+
+// The tabs over the pages. Not std-widgets' TabWidget: its fluent tabs keep
+// a divider between two tabs until one of them is current, so the divider
+// stayed on the edge of the tab under the pointer, over its background.
+component TabBar inherits FocusScope {
+    in property <[string]> titles;
+    in-out property <int> current;
+    // A click picks a tab and leaves the focus where it was.
+    focus-on-click: false;
+    accessible-role: tab-list;
+    accessible-item-count: root.titles.length;
+    key-pressed(event) => {
+        if event.text == Key.LeftArrow {
+            root.current = Math.max(root.current - 1, 0);
+            return accept;
+        }
+        if event.text == Key.RightArrow {
+            root.current = Math.min(root.current + 1, root.titles.length - 1);
+            return accept;
+        }
+        reject
+    }
+    // The line the tabs stand on.
+    Rectangle {
+        y: parent.height - 1px;
+        height: 1px;
+        background: Card.stroke;
+    }
+
+    HorizontalLayout {
+        alignment: start;
+        for title[index] in root.titles: TabButton {
+            title: title;
+            current: index == root.current;
+            focused: index == root.current && root.has-focus;
+            clicked => {
+                root.current = index;
+            }
+        }
+    }
+}
+
+component Paragraph inherits StyledText {
+    default-color: Palette.foreground;
+    link-color: Palette.color-scheme == ColorScheme.dark ? #60cdff : #005fb8;
+}
+
 export component SettingsWindow inherits Window {
     in property <string> version;
     // Set when the candidate colors turn the window dark or back.
@@ -591,253 +708,255 @@ export component SettingsWindow inherits Window {
     callback apply();
     callback import();
     callback export();
-    callback about();
+    callback open-url(string);
+
+    // The page shown, in the order of the titles.
+    in-out property <int> tab;
 
     title: "InputMethodEditor 設定 (" + root.version + ")";
     preferred-width: 820px;
-    // With the title and menu bars, still within a 1080p screen at 150%
-    // above the taskbar.
+    // With the title bar, still within a 1080p screen at 150% above the
+    // taskbar.
     preferred-height: 600px;
     background: Palette.background;
 
-    MenuBar {
-        Menu {
-            title: "檔案";
-            MenuItem {
-                title: "匯入設定檔...";
-                activated => {
-                    root.import();
-                }
+    // Ctrl+Tab and Ctrl+Shift+Tab go through the pages from wherever the
+    // focus is, as in Windows' own property sheets.
+    FocusScope {
+        focus-on-click: false;
+        focus-on-tab-navigation: false;
+        capture-key-pressed(event) => {
+            if root.picking != 0 || !event.modifiers.control {
+                return reject;
             }
-
-            MenuItem {
-                title: "匯出設定檔...";
-                activated => {
-                    root.export();
-                }
+            if event.text == Key.Backtab || (event.text == Key.Tab && event.modifiers.shift) {
+                root.tab = Math.mod(root.tab + tab-bar.titles.length - 1, tab-bar.titles.length);
+                return accept;
             }
+            if event.text == Key.Tab {
+                root.tab = Math.mod(root.tab + 1, tab-bar.titles.length);
+                return accept;
+            }
+            reject
         }
 
-        Menu {
-            title: "關於";
-            MenuItem {
-                title: "關於 InputMethodEditor";
-                activated => {
-                    root.about();
-                }
-            }
-        }
-    }
-
-    VerticalLayout {
-        padding: 8px;
-        spacing: 8px;
-        tabs := TabWidget {
-            Tab {
-                title: "打字行為";
-                // Rows grow taller than the window on a small screen.
-                ScrollView {
-                    HorizontalLayout {
-                        padding: 16px;
-                        spacing: 24px;
-                        Column {
-                            table: 0;
-                        }
-
-                        Column {
-                            table: 1;
-                        }
-                    }
-                }
+        VerticalLayout {
+            padding: 8px;
+            spacing: 8px;
+            tab-bar := TabBar {
+                titles: [
+                    "打字行為",
+                    "各程式",
+                    "界面外觀",
+                    "鍵盤設定",
+                    "拼音",
+                    "自訂快捷鍵",
+                    "特殊符號",
+                    "快捷符號",
+                    "自訂詞組",
+                    "記錄與備份",
+                    "關於",
+                ];
+                current <=> root.tab;
             }
 
-            Tab {
-                title: "各程式";
-                VerticalLayout {
+            // 打字行為
+            // Rows grow taller than the window on a small screen.
+            if root.tab == 0: ScrollView {
+                HorizontalLayout {
                     padding: 16px;
-                    spacing: 8px;
-                    HorizontalLayout {
-                        spacing: 16px;
-                        vertical-stretch: 1;
-                        VerticalLayout {
-                            spacing: 8px;
-                            Label {
-                                text: "開啟或切換到這些程式時用英數：";
-                            }
-
-                            Editor {
-                                text <=> root.english-apps;
-                            }
-
-                            HorizontalLayout {
-                                alignment: start;
-                                Button {
-                                    text: "從程式清單加入…";
-                                    clicked => {
-                                        root.open-picker(1);
-                                    }
-                                }
-                            }
-                        }
-
-                        VerticalLayout {
-                            spacing: 8px;
-                            Label {
-                                text: "開啟或切換到這些程式時用中文：";
-                            }
-
-                            Editor {
-                                text <=> root.chinese-apps;
-                            }
-
-                            HorizontalLayout {
-                                alignment: start;
-                                Button {
-                                    text: "從程式清單加入…";
-                                    clicked => {
-                                        root.open-picker(2);
-                                    }
-                                }
-                            }
-                        }
+                    spacing: 24px;
+                    Column {
+                        table: 0;
                     }
 
-                    Help {
-                        text: "每行一個程式的執行檔名稱，例如 chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到，或按「從程式清單加入」挑選；大小寫不拘，.exe 可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依 CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock 讓燈號對上。";
+                    Column {
+                        table: 1;
                     }
                 }
             }
 
-            Tab {
-                title: "界面外觀";
-                // Rows grow taller than the window on a small screen.
-                ScrollView {
+            // 各程式
+            if root.tab == 1: VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    spacing: 16px;
+                    vertical-stretch: 1;
                     VerticalLayout {
-                        padding: 16px;
-                        alignment: start;
-                        Column {
-                            table: 2;
+                        spacing: 8px;
+                        Label {
+                            text: "開啟或切換到這些程式時用英數：";
+                        }
+
+                        Editor {
+                            text <=> root.english-apps;
                         }
 
                         HorizontalLayout {
                             alignment: start;
-                            spacing: 24px;
-                            Column {
-                                table: 3;
-                            }
-
-                            Column {
-                                table: 4;
+                            Button {
+                                text: "從程式清單加入…";
+                                clicked => {
+                                    root.open-picker(1);
+                                }
                             }
                         }
                     }
-                }
-            }
 
-            Tab {
-                title: "鍵盤設定";
-                // Rows grow taller than the window on a small screen.
-                ScrollView {
                     VerticalLayout {
-                        padding: 16px;
-                        alignment: start;
-                        Column {
-                            table: 5;
-                        }
-                    }
-                }
-            }
-
-            Tab {
-                title: "拼音";
-                // Rows grow taller than the window on a small screen.
-                ScrollView {
-                    VerticalLayout {
-                        padding: 16px;
                         spacing: 8px;
-                        alignment: start;
-                        Column {
-                            table: 6;
+                        Label {
+                            text: "開啟或切換到這些程式時用中文：";
                         }
 
-                        Help {
-                            text: "模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong 也有「中」。只在拼音模式作用。";
+                        Editor {
+                            text <=> root.chinese-apps;
                         }
 
                         HorizontalLayout {
-                            spacing: 24px;
-                            Column {
-                                table: 7;
+                            alignment: start;
+                            Button {
+                                text: "從程式清單加入…";
+                                clicked => {
+                                    root.open-picker(2);
+                                }
                             }
+                        }
+                    }
+                }
 
-                            Column {
-                                table: 8;
-                            }
+                Help {
+                    text: "每行一個程式的執行檔名稱，例如 chrome.exe、Telegram.exe，可在工作管理員的「詳細資料」頁找到，或按「從程式清單加入」挑選；大小寫不拘，.exe 可省略。在程式裡照樣可以切換，離開再回來就換回這裡的設定。沒列出的程式照舊：記住上次的模式，或依 CapsLock 燈號。用 CapsLock 切換中英文時，會自動按一下 CapsLock 讓燈號對上。";
+                }
+            }
+
+            // 界面外觀
+            // Rows grow taller than the window on a small screen.
+            if root.tab == 2: ScrollView {
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: start;
+                    Column {
+                        table: 2;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 24px;
+                        Column {
+                            table: 3;
+                        }
+
+                        Column {
+                            table: 4;
                         }
                     }
                 }
             }
 
-            Tab {
-                title: "自訂快捷鍵";
+            // 鍵盤設定
+            // Rows grow taller than the window on a small screen.
+            if root.tab == 3: ScrollView {
+                VerticalLayout {
+                    padding: 16px;
+                    alignment: start;
+                    Column {
+                        table: 5;
+                    }
+                }
+            }
+
+            // 拼音
+            // Rows grow taller than the window on a small screen.
+            if root.tab == 4: ScrollView {
                 VerticalLayout {
                     padding: 16px;
                     spacing: 8px;
+                    alignment: start;
+                    Column {
+                        table: 6;
+                    }
+
+                    Help {
+                        text: "模糊音：分不清的音，打哪一個都找得到兩邊的字，例如勾選 z = zh，打 zong 也有「中」。只在拼音模式作用。";
+                    }
+
                     HorizontalLayout {
-                        alignment: start;
-                        spacing: 8px;
-                        KeybindHeader {
-                            width: 200px;
-                            label: "動作";
-                            hint: root.keybind-hints[0];
+                        spacing: 24px;
+                        Column {
+                            table: 7;
+                            follows: true;
                         }
 
-                        KeybindHeader {
-                            width: 200px;
-                            label: "參數";
-                            hint: root.keybind-hints[1];
-                        }
-
-                        KeybindHeader {
-                            width: 200px;
-                            label: "快捷鍵";
-                            hint: root.keybind-hints[2];
-                        }
-
-                        Text {
-                            text: "刪除";
-                            color: Palette.foreground;
-                            font-weight: 600;
+                        Column {
+                            table: 8;
+                            follows: true;
                         }
                     }
+                }
+            }
 
-                    Rectangle {
-                        height: 1px;
-                        background: Palette.border;
+            // 自訂快捷鍵
+            if root.tab == 5: VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    KeybindHeader {
+                        width: 200px;
+                        label: "動作";
+                        hint: root.keybind-hints[0];
                     }
 
-                    ListView {
-                        for keybind[index] in root.keybinds: KeybindRow {
-                            item: keybind;
-                            actions: root.actions;
-                            action(choice) => {
-                                root.keybind-action(index, choice);
-                            }
-                            param(text) => {
-                                root.keybind-param(index, text);
-                            }
-                            key(text) => {
-                                root.keybind-key(index, text);
-                            }
-                            remove => {
-                                root.keybind-remove(index);
-                            }
+                    KeybindHeader {
+                        width: 200px;
+                        label: "參數";
+                        hint: root.keybind-hints[1];
+                    }
+
+                    KeybindHeader {
+                        width: 200px;
+                        label: "快捷鍵";
+                        hint: root.keybind-hints[2];
+                    }
+
+                    Text {
+                        text: "刪除";
+                        color: Palette.foreground;
+                        font-weight: 600;
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Palette.border;
+                }
+
+                ListView {
+                    for keybind[index] in root.keybinds: KeybindRow {
+                        item: keybind;
+                        actions: root.actions;
+                        action(choice) => {
+                            root.keybind-action(index, choice);
+                        }
+                        param(text) => {
+                            root.keybind-param(index, text);
+                        }
+                        key(text) => {
+                            root.keybind-key(index, text);
+                        }
+                        remove => {
+                            root.keybind-remove(index);
                         }
                     }
+                }
 
+                HorizontalLayout {
+                    alignment: start;
                     Button {
-                        text: "+";
-                        accessible-label: "新增快捷鍵";
+                        text: "新增快捷鍵";
                         clicked => {
                             root.keybind-add();
                         }
@@ -845,159 +964,225 @@ export component SettingsWindow inherits Window {
                 }
             }
 
-            Tab {
-                title: "特殊符號";
+            // 特殊符號
+            if root.tab == 6: VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 8px;
+                    CheckBox {
+                        text: "中文模式下按這個鍵開啟符號表：";
+                        checked <=> root.symbol-key-on;
+                        Tooltip {
+                            text: root.symbol-hint;
+                        }
+                    }
+
+                    LineEdit {
+                        width: 140px;
+                        text <=> root.symbol-key;
+                        enabled: root.symbol-key-on;
+                    }
+                }
+
+                Label {
+                    text: "符號表：";
+                }
+
+                Editor {
+                    text <=> root.symbols;
+                }
+
+                Help {
+                    text: "以上是符號表的設定檔，語法相當簡單：\n每一行的內容都是：「分類名稱」＝「此分類下的所有符號」\n您也可以一行只放一個符號，則該符號會被放在最上層選單。";
+                }
+            }
+
+            // 快捷符號
+            if root.tab == 7: VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                Label {
+                    text: "輸入中文時，按下 Shift 鍵（或 Ctrl + Shift）加英文字母即可快速輸入文字：";
+                }
+
+                Editor {
+                    text <=> root.swkb;
+                }
+
+                Help {
+                    text: "以上是快捷符號的設定檔，語法相當簡單：\n每一行的內容都是：「大寫字母」＋「空格」＋「對應的符號或文字」。";
+                }
+            }
+
+            // 自訂詞組
+            if root.tab == 8: VerticalLayout {
+                padding: 16px;
+                spacing: 8px;
+                Label {
+                    text: "打縮寫再按空白鍵，就換成設定的文字（注音、拼音都可以用）：";
+                }
+
+                Editor {
+                    text <=> root.phrases;
+                }
+
+                Help {
+                    text: "每一行是：「縮寫」＋「空格」＋「文字」，縮寫只能用英文字母，例如：\naddr 臺北市信義區市府路 1 號\n縮寫要在沒有組字時開始打；和拼音相同的縮寫（例如 wo）會取代原本的字。# 開頭的行是註解。";
+                }
+            }
+
+            // 記錄與備份
+            // Rows grow taller than the window on a small screen.
+            if root.tab == 9: ScrollView {
                 VerticalLayout {
                     padding: 16px;
                     spacing: 8px;
+                    alignment: start;
+                    Column {
+                        table: 10;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        Button {
+                            text: "開啟記錄檔資料夾";
+                            clicked => {
+                                root.open-log-dir();
+                            }
+                        }
+                    }
+
+                    Header {
+                        label: "設定檔";
+                    }
+
+                    Help {
+                        text: "把這裡的設定存成一個檔案，搬到另一台電腦或留作備份。匯出的是目前畫面上的設定，包括還沒套用的變更；匯入後按「確定」或「套用」才會生效。";
+                    }
+
                     HorizontalLayout {
                         alignment: start;
                         spacing: 8px;
-                        CheckBox {
-                            text: "中文模式下按這個鍵開啟符號表：";
-                            checked <=> root.symbol-key-on;
-                            Tooltip {
-                                text: root.symbol-hint;
+                        Button {
+                            text: "匯入設定檔…";
+                            clicked => {
+                                root.import();
                             }
                         }
 
-                        LineEdit {
-                            width: 140px;
-                            text <=> root.symbol-key;
-                            enabled: root.symbol-key-on;
+                        Button {
+                            text: "匯出設定檔…";
+                            clicked => {
+                                root.export();
+                            }
                         }
                     }
-
-                    Label {
-                        text: "符號表：";
-                    }
-
-                    Editor {
-                        text <=> root.symbols;
-                    }
-
-                    Help {
-                        text: "以上是符號表的設定檔，語法相當簡單：\n每一行的內容都是：「分類名稱」＝「此分類下的所有符號」\n您也可以一行只放一個符號，則該符號會被放在最上層選單。";
-                    }
                 }
             }
 
-            Tab {
-                title: "快捷符號";
+            // 關於, with the updates as on Chrome's.
+            if root.tab == 10: ScrollView {
                 VerticalLayout {
                     padding: 16px;
                     spacing: 8px;
-                    Label {
-                        text: "輸入中文時，按下 Shift 鍵（或 Ctrl + Shift）加英文字母即可快速輸入文字：";
-                    }
-
-                    Editor {
-                        text <=> root.swkb;
-                    }
-
-                    Help {
-                        text: "以上是符號表的設定檔，語法相當簡單：\n每一行的內容都是：「大寫字母」＋「空格」＋「對應的符號或文字」。";
-                    }
-                }
-            }
-
-            Tab {
-                title: "自訂詞組";
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 8px;
-                    Label {
-                        text: "打縮寫再按空白鍵，就換成設定的文字（注音、拼音都可以用）：";
-                    }
-
-                    Editor {
-                        text <=> root.phrases;
-                    }
-
-                    Help {
-                        text: "每一行是：「縮寫」＋「空格」＋「文字」，縮寫只能用英文字母，例如：\naddr 臺北市信義區市府路 1 號\n縮寫要在沒有組字時開始打；和拼音相同的縮寫（例如 wo）會取代原本的字。# 開頭的行是註解。";
-                    }
-                }
-            }
-
-            Tab {
-                title: "更新與記錄";
-                // Rows grow taller than the window on a small screen.
-                ScrollView {
-                    VerticalLayout {
-                        padding: 16px;
-                        spacing: 8px;
+                    alignment: start;
+                    HorizontalLayout {
                         alignment: start;
-                        Column {
-                            table: 9;
+                        spacing: 16px;
+                        padding-bottom: 8px;
+                        Image {
+                            source: @image-url("logo.svg");
+                            width: 96px;
+                            height: 96px;
                         }
 
-                        HorizontalLayout {
-                            alignment: start;
-                            spacing: 12px;
-                            padding-top: 16px;
-                            Button {
-                                text: "立即檢查更新";
-                                enabled: !root.checking;
-                                clicked => {
-                                    root.check-update();
-                                }
+                        VerticalLayout {
+                            alignment: center;
+                            spacing: 4px;
+                            Text {
+                                text: "InputMethodEditor";
+                                color: Palette.foreground;
+                                font-size: 20px;
+                                font-weight: 600;
                             }
 
-                            Label {
-                                text: root.update-status;
+                            Paragraph {
+                                text: @markdown("版本 \{root.version}・授權方式 GPL-3.0-or-later");
                             }
-                        }
 
-                        Column {
-                            table: 10;
-                        }
-
-                        HorizontalLayout {
-                            alignment: start;
-                            Button {
-                                text: "開啟記錄檔資料夾";
-                                clicked => {
-                                    root.open-log-dir();
+                            Paragraph {
+                                text: @markdown("專案首頁：[GitHub](https://github.com/linzeyan/InputMethodEditor)");
+                                link-clicked(url) => {
+                                    root.open-url(url);
                                 }
                             }
                         }
                     }
+
+                    Paragraph {
+                        text: @markdown("核心是新酷音（libchewing）。這個設定程式改自 windows-chewing-preferences，原作者為新酷音開發團隊（Chewing Project Authors），詳見 [https://chewing.im](https://chewing.im)。");
+                        link-clicked(url) => {
+                            root.open-url(url);
+                        }
+                    }
+
+                    Column {
+                        table: 9;
+                        follows: true;
+                    }
+
+                    HorizontalLayout {
+                        alignment: start;
+                        spacing: 12px;
+                        Button {
+                            text: "立即檢查更新";
+                            enabled: !root.checking;
+                            clicked => {
+                                root.check-update();
+                            }
+                        }
+
+                        Label {
+                            text: root.update-status;
+                        }
+                    }
                 }
             }
-        }
 
-        HorizontalLayout {
-            spacing: 4px;
-            // 各程式 and 自訂詞組 are the user's own, with nothing to go back to.
-            Button {
-                text: "還原此頁預設值";
-                enabled: tabs.current-index != 1 && tabs.current-index != 8;
-                clicked => {
-                    root.reset(tabs.current-index);
+            HorizontalLayout {
+                spacing: 4px;
+                // 各程式 and 自訂詞組 are the user's own, with nothing to go back to.
+                Button {
+                    text: "還原此頁預設值";
+                    enabled: root.tab != 1 && root.tab != 8;
+                    clicked => {
+                        root.reset(root.tab);
+                    }
                 }
-            }
 
-            Rectangle { }
+                Rectangle { }
 
-            Button {
-                text: "確定";
-                clicked => {
-                    root.ok();
+                Button {
+                    text: "確定";
+                    clicked => {
+                        root.ok();
+                    }
                 }
-            }
 
-            Button {
-                text: "取消";
-                clicked => {
-                    root.cancel();
+                Button {
+                    text: "取消";
+                    clicked => {
+                        root.cancel();
+                    }
                 }
-            }
 
-            Button {
-                text: "套用";
-                clicked => {
-                    root.apply();
+                Button {
+                    text: "套用";
+                    clicked => {
+                        root.apply();
+                    }
                 }
             }
         }

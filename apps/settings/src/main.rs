@@ -12,25 +12,24 @@ mod programs;
 mod settings;
 mod update;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::env;
 use std::path::PathBuf;
 
 use chewing_tip_core::SETTINGS_SCHEME;
-use chewing_tip_core::shell::open_url;
 use slint::language::ColorScheme;
 use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::winit::platform::windows::{IconExtWindows, WindowAttributesExtWindows};
 use slint::winit_030::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use slint::winit_030::winit::window::{Icon, Theme, WindowButtons};
+use slint::winit_030::winit::window::{Icon, Theme};
 use slint::{ComponentHandle, PhysicalPosition};
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    IDYES, MB_ICONERROR, MB_ICONQUESTION, MB_OK, MB_YESNO, MESSAGEBOX_RESULT, MESSAGEBOX_STYLE,
-    MessageBoxW, SendMessageW,
+    FindWindowW, IDYES, IsIconic, MB_ICONERROR, MB_ICONQUESTION, MB_OK, MB_YESNO,
+    MESSAGEBOX_RESULT, MESSAGEBOX_STYLE, MessageBoxW, SW_RESTORE, SetForegroundWindow, ShowWindow,
 };
 use windows::core::HSTRING;
 use windows_registry::CURRENT_USER;
@@ -43,12 +42,6 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 thread_local! {
     /// Whether windows are made dark, which the winit hook reads as each is.
     static DARK: Cell<bool> = const { Cell::new(false) };
-    /// The palette once the candidate colors turned the theme; until then
-    /// each window's own.
-    static SCHEME: Cell<ColorScheme> = const { Cell::new(ColorScheme::Unknown) };
-    /// The window the next one made belongs to: the about box's.
-    static OWNER: Cell<Option<isize>> = const { Cell::new(None) };
-    static ABOUT: RefCell<Option<AboutWindow>> = const { RefCell::new(None) };
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -71,12 +64,6 @@ fn main() -> Result<(), slint::PlatformError> {
             // to Windows.
             if DARK.get() {
                 attributes = attributes.with_theme(Some(Theme::Dark));
-            }
-            if let Some(owner) = OWNER.take() {
-                // Above the window it was opened from, as a dialog is.
-                attributes = attributes
-                    .with_owner_window(owner)
-                    .with_enabled_buttons(WindowButtons::CLOSE);
             }
             attributes
         })
@@ -178,78 +165,37 @@ fn system_dark() -> bool {
         .is_ok_and(|light| light == 0)
 }
 
-/// Turns `window`, and the about box if open, dark or back as the candidate
-/// colors go. Returns the palette for `window` when it changes.
+/// Turns `window` dark or back as the candidate colors go. Returns the
+/// palette for it when it changes.
 fn follow_candidates(window: &slint::Window, dark: bool) -> Option<ColorScheme> {
     if DARK.get() == dark {
         return None;
     }
     DARK.set(dark);
+    // The title bar; winit leaves it to Windows given none.
+    window.with_winit_window(|window| window.set_theme(dark.then_some(Theme::Dark)));
     // Told outright: the palette has only seen the theme the window was
     // made with, and light is Windows' own.
-    let scheme = if dark || system_dark() {
+    Some(if dark || system_dark() {
         ColorScheme::Dark
     } else {
         ColorScheme::Light
-    };
-    SCHEME.set(scheme);
-    // The title bar; winit leaves it to Windows given none.
-    let title_bar = |window: &slint::Window| {
-        window.with_winit_window(|window| window.set_theme(dark.then_some(Theme::Dark)));
-    };
-    title_bar(window);
-    // The menu bar, which Slint re-themes only when Windows' theme changes:
-    // muda's message for it (`MENU_UPDATE_THEME` in muda 0.19), its
-    // `MenuTheme` Dark or else Auto, as the title bar.
-    if let Some(hwnd) = hwnd(window) {
-        let theme = if dark { 0 } else { 2 };
-        unsafe { SendMessageW(hwnd, 201, None, Some(LPARAM(theme))) };
-    }
-    ABOUT.with_borrow(|about| {
-        if let Some(about) = about {
-            title_bar(about.window());
-            about.set_scheme(scheme);
-        }
-    });
-    Some(scheme)
+    })
 }
 
-/// Made when asked for, centered on the window it is opened from.
-fn show_about(owner: &slint::Window) {
-    if let Some(about) = ABOUT.with_borrow(|about| about.as_ref().map(|about| about.clone_strong()))
-        && about.window().is_visible()
-    {
-        about
-            .window()
-            .with_winit_window(|window| window.focus_window());
-        return;
-    }
-    // Before it is made: Slint runs the winit hook as it makes the window's
-    // adapter, with the component, not when it is shown.
-    OWNER.set(hwnd(owner).map(|hwnd| hwnd.0 as isize));
-    let about = AboutWindow::new();
-    OWNER.set(None);
-    let about = match about {
-        Ok(about) => about,
-        Err(error) => return error_box(Some(owner), &error.to_string()),
+/// Brings the window titled `title` to the front, if one is open, and tells
+/// whether there was one. The IME's menu starts a process for each click: a
+/// second window saving the settings it opened with put back what the first
+/// had changed since.
+fn bring_forward(title: &str) -> bool {
+    let Ok(hwnd) = (unsafe { FindWindowW(None, &HSTRING::from(title)) }) else {
+        return false;
     };
-    about.set_version(VERSION.into());
-    about.set_scheme(SCHEME.get());
-    about.on_open_url(|url| open_url(&url));
-    about.on_ok({
-        let about = about.as_weak();
-        move || {
-            let _ = about.unwrap().hide();
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
         }
-    });
-    let (position, size, scale) = (owner.position(), owner.size(), owner.scale_factor());
-    let (width, height) = (430.0 * scale, 400.0 * scale);
-    about.window().set_position(PhysicalPosition::new(
-        position.x + ((size.width as f32 - width) / 2.0) as i32,
-        position.y + ((size.height as f32 - height) / 2.0) as i32,
-    ));
-    match about.show() {
-        Ok(()) => ABOUT.set(Some(about)),
-        Err(error) => error_box(Some(owner), &error.to_string()),
+        let _ = SetForegroundWindow(hwnd);
     }
+    true
 }

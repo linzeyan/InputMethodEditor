@@ -38,41 +38,11 @@ export component DictionaryWindow inherits Window {
     callback apply();
     callback import();
     callback export();
-    callback about();
 
     title: "InputMethodEditor 使用者詞庫 (" + root.version + ")";
     preferred-width: 930px;
     preferred-height: 600px;
     background: Palette.background;
-
-    MenuBar {
-        Menu {
-            title: "檔案";
-            MenuItem {
-                title: "匯入詞庫...";
-                activated => {
-                    root.import();
-                }
-            }
-
-            MenuItem {
-                title: "匯出詞庫...";
-                activated => {
-                    root.export();
-                }
-            }
-        }
-
-        Menu {
-            title: "關於";
-            MenuItem {
-                title: "關於 InputMethodEditor";
-                activated => {
-                    root.about();
-                }
-            }
-        }
-    }
 
     HorizontalLayout {
         padding: 10px;
@@ -104,10 +74,28 @@ export component DictionaryWindow inherits Window {
                         root.save();
                     }
                 }
+
+                Rectangle {
+                    width: 12px;
+                }
+
+                Button {
+                    text: "匯入詞庫…";
+                    clicked => {
+                        root.import();
+                    }
+                }
+
+                Button {
+                    text: "匯出詞庫…";
+                    clicked => {
+                        root.export();
+                    }
+                }
             }
 
             LineEdit {
-                placeholder-text: "搜尋...";
+                placeholder-text: "搜尋…";
                 text <=> root.query;
                 edited(text) => {
                     root.search(text);
@@ -116,9 +104,9 @@ export component DictionaryWindow inherits Window {
 
             StandardTableView {
                 columns: [
-                    { title: "字/詞" },
+                    { title: "字／詞" },
                     { title: "注音", sort-order: SortOrder.ascending },
-                    { title: "偏好程度 (-100..100)" },
+                    { title: "偏好程度" },
                 ];
                 rows: root.rows;
                 current-row <=> root.current-row;
@@ -144,7 +132,7 @@ export component DictionaryWindow inherits Window {
             alignment: start;
             spacing: 6px;
             Label {
-                text: "字/詞";
+                text: "字／詞";
             }
 
             LineEdit {
@@ -166,7 +154,7 @@ export component DictionaryWindow inherits Window {
             }
 
             Label {
-                text: "常用度";
+                text: "偏好程度";
             }
 
             SpinBox {

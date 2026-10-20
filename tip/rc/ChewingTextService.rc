@@ -110,7 +110,7 @@ IDR_MENU MENU
 BEGIN
     POPUP "POPUP"
     BEGIN
-        MENUITEM "新酷音使用說明 (&H)",                ID_CHEWING_HELP
+        MENUITEM "使用說明 (&H)",                   ID_CHEWING_HELP
         MENUITEM "編輯使用者詞庫 (&E)",                ID_USER_DICTIONARY
         MENUITEM "設定 (&C)",                       ID_CONFIG
         MENUITEM SEPARATOR
@@ -136,10 +136,8 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_CHEWING             "新酷音輸入法"
     IDS_SWITCH_LANG         "中文/英文切換"
     IDS_SETTINGS            "設定/工具選單"
-    IDS_CONFIG_TITLE        "設定新酷音輸入法"
 END
 
 #endif    // Chinese (Traditional, Taiwan) resources
