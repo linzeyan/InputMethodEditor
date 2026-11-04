@@ -11,4 +11,4 @@ scoped-error.workspace = true
 sha2 = "0.10.9"
 xflags = "0.3.2"
 xshell = "0.2.7"
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
