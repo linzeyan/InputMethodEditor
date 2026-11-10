@@ -125,6 +125,7 @@ BEGIN
         END
         MENUITEM "輸出簡體中文 (&S)",                 ID_OUTPUT_SIMP_CHINESE
         MENUITEM "簡體改用大陸用語，如 軟體→软件 (&V)",   ID_OUTPUT_SIMP_VOCABULARY
+        MENUITEM "選字依常用程度排序 (&F)",            ID_SORT_CANDIDATES
     END
 END
 

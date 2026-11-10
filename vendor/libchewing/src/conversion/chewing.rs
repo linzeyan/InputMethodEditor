@@ -3,11 +3,15 @@ use std::fmt::Debug;
 use bstr::ByteSlice;
 use log::{Level, debug, log_enabled};
 
-use super::{Composition, ConversionEngine, Gap, Interval, Outcome};
+use super::{
+    Composition, ConversionEngine, Gap, Interval, Outcome, Selection, Symbol,
+    word_lattice::{Edge, Lattice},
+};
 use crate::{
     conversion::{Decoder, LatticeBuilder},
     dictionary::StringTable,
     model::Candidate,
+    zhuyin::Syllable,
 };
 
 /// The default Chewing conversion method.
@@ -22,10 +26,32 @@ impl ChewingEngine {
     const MAX_OUT: u8 = 10;
 
     pub(crate) fn convert<'a>(&'a self, com: &'a Composition) -> Vec<Outcome> {
-        let lattice = self.word_lattice_builder.build_lattice(com);
+        self.convert_after(com, &[])
+    }
+
+    /// The context's syllables go in front of the composition's, so a word
+    /// can run from one into the other and the context weighs in on the
+    /// first words; only words that read as what was committed may cover the
+    /// context, and what they cover is dropped from the output.
+    pub(crate) fn convert_after<'a>(
+        &'a self,
+        com: &'a Composition,
+        context: &[(Syllable, String)],
+    ) -> Vec<Outcome> {
+        let context = if com.is_empty() { &[][..] } else { context };
+        let n = context.len();
+        let joined;
+        let lattice = if n == 0 {
+            self.word_lattice_builder.build_lattice(com)
+        } else {
+            joined = after_context(com, context);
+            let mut lattice = self.word_lattice_builder.build_lattice(&joined);
+            self.keep_agreeing(&mut lattice, context);
+            lattice
+        };
         let hypothesis = self.decoder.decoden(lattice, Self::MAX_OUT);
 
-        hypothesis
+        let mut outcomes: Vec<Outcome> = hypothesis
             .into_iter()
             .map(|hyp| {
                 let cost = hyp.cost;
@@ -56,21 +82,125 @@ impl ChewingEngine {
                         cursor = int.end;
                         int
                     })
+                    .filter_map(|interval| past_context(interval, n))
                     .fold(vec![], |acc, interval| glue_fn(com, acc, interval));
                 Outcome { intervals, cost }
             })
-            .inspect(|out| {
-                if log_enabled!(Level::Debug) {
-                    debug!("Cost {:>5.2} {:?}", out.cost, out.intervals);
-                }
-            })
-            .collect()
+            .collect();
+        if n > 0 {
+            // Readings that differ only within the context come out the same
+            // once it is dropped; the cheapest goes first, so it stays.
+            let mut seen = vec![];
+            outcomes.retain(|out| {
+                let text: String = out.intervals.iter().map(|it| &*it.text).collect();
+                let new = !seen.contains(&text);
+                seen.push(text);
+                new
+            });
+        }
+        if log_enabled!(Level::Debug) {
+            for out in &outcomes {
+                debug!("Cost {:>5.2} {:?}", out.cost, out.intervals);
+            }
+        }
+        outcomes
     }
+
+    /// Leaves on the context only the words whose characters there are the
+    /// ones committed. Each context character keeps a way through on its own,
+    /// as a plain character if no single word fits: else the only word left
+    /// over it could be one running into the composition, forced on it.
+    fn keep_agreeing(&self, lattice: &mut Lattice, context: &[(Syllable, String)]) {
+        let n = context.len();
+        for (start, edges) in lattice.edges.iter_mut().enumerate().take(n) {
+            edges.retain(|edge| {
+                let end = (edge.end as usize).min(n);
+                let Candidate::Word { wid, .. } = &edge.cand else {
+                    return false;
+                };
+                self.string_table.get_text(*wid).is_some_and(|text| {
+                    text.as_bytes()
+                        .graphemes()
+                        .take(end - start)
+                        .eq(context[start..end].iter().map(|(_, ch)| ch.as_str()))
+                })
+            });
+            if !edges.iter().any(|edge| edge.end as usize == start + 1) {
+                edges.push(Edge {
+                    end: (start + 1) as u8,
+                    cand: Candidate::Grapheme(context[start].1.clone()),
+                    bonus: 0.0,
+                });
+            }
+        }
+    }
+}
+
+/// `com` with the context's syllables in front, free to form words with its
+/// first ones.
+fn after_context(com: &Composition, context: &[(Syllable, String)]) -> Composition {
+    let n = context.len();
+    let mut joined = Composition::new();
+    joined.symbols = context
+        .iter()
+        .map(|(syl, _)| Symbol::from(*syl))
+        .chain(com.symbols.iter().cloned())
+        .collect();
+    joined.gaps = vec![Gap::Normal; n];
+    joined.gaps.extend_from_slice(&com.gaps);
+    joined.gaps[0] = Gap::Begin;
+    joined.gaps[n] = Gap::Normal;
+    joined.selections = com
+        .selections
+        .iter()
+        .map(|sel| Selection {
+            start: sel.start + n,
+            end: sel.end + n,
+            ..*sel
+        })
+        .collect();
+    joined
+}
+
+/// The part of `interval` past the first `n` symbols, the context, placed
+/// in the composition. A word running out of the context keeps only the
+/// characters typed now, and is no word of the composition's: not one to
+/// learn, or to pin as chosen.
+fn past_context(interval: Interval, n: usize) -> Option<Interval> {
+    if interval.end <= n {
+        return None;
+    }
+    if interval.start >= n {
+        return Some(Interval {
+            start: interval.start - n,
+            end: interval.end - n,
+            ..interval
+        });
+    }
+    let text: String = interval
+        .text
+        .as_bytes()
+        .graphemes()
+        .skip(n - interval.start)
+        .collect();
+    Some(Interval {
+        start: 0,
+        end: interval.end - n,
+        is_phrase: false,
+        text: text.into_boxed_str(),
+    })
 }
 
 impl ConversionEngine for ChewingEngine {
     fn convert<'a>(&'a self, comp: &'a Composition) -> Vec<Outcome> {
         ChewingEngine::convert(self, comp)
+    }
+    fn convert_after<'a>(
+        &'a self,
+        comp: &'a Composition,
+        context: &[(Syllable, String)],
+    ) -> Vec<Outcome> {
+        ChewingEngine::convert_after(self, comp, context)
     }
 }
 
@@ -508,6 +638,39 @@ mod tests {
                 .cycle()
                 .nth(2)
                 .map(|p| p.intervals)
+        );
+    }
+
+    #[test]
+    fn convert_after_context_the_dictionary_cannot_read() {
+        let string_table = StringTable::new();
+        let dict = test_dictionary(string_table.clone());
+        let engine = ChewingEngine {
+            word_lattice_builder: LatticeBuilder {
+                dict,
+                lookup_strategy: LookupStrategy::Standard,
+            },
+            decoder: Decoder {
+                lm: StaticLm::new(),
+                hist: HistoryDict::new(string_table.clone()),
+                lambda: Decoder::LAMBDA,
+            },
+            string_table,
+        };
+        let mut composition = Composition::new();
+        composition.push(Symbol::from(syl![G, U, O, TONE2]));
+        composition.push(Symbol::from(syl![M, I, EN, TONE2]));
+        // No word reads as 貝 (nor is there any for ㄅㄟˋ): the composition
+        // still converts, and the context stays out of the output.
+        let context = [(syl![B, EI, TONE4], "貝".to_string())];
+        assert_eq!(
+            vec![Interval {
+                start: 0,
+                end: 2,
+                is_phrase: true,
+                text: "國民".into()
+            }],
+            engine.convert_after(&composition, &context)[0].intervals
         );
     }
 

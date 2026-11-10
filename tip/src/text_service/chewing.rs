@@ -235,6 +235,8 @@ impl ChewingTextService {
         self.engine.hide_candidates();
         self.engine.hide_composition_bar();
         self.engine.hide_message();
+        // Another document of this thread may get the next keys.
+        self.engine.forget_context();
         Ok(())
     }
 

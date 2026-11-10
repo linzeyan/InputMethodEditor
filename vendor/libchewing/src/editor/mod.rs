@@ -176,6 +176,12 @@ pub(crate) struct SharedState {
     nth_conversion: usize,
     commit_buffer: String,
     notice_buffer: String,
+    /// The last characters committed, with their syllables, that the next
+    /// composition converts after (`ConversionEngine::convert_after`).
+    context: Vec<(Syllable, String)>,
+    /// Whether the key being processed committed syllables; any other text it
+    /// commits ends the context.
+    context_kept: bool,
 }
 
 impl Editor {
@@ -359,6 +365,8 @@ impl Editor {
                 nth_conversion: 0,
                 commit_buffer: String::new(),
                 notice_buffer: String::new(),
+                context: vec![],
+                context_kept: false,
             },
             state: Box::new(Entering),
         }
@@ -385,6 +393,12 @@ impl Editor {
     }
     pub fn clear_composition_editor(&mut self) {
         self.shared.com.clear();
+    }
+    /// Stops converting after what was committed last: the text before the
+    /// cursor is something else now (the key went to the program, the caret
+    /// moved).
+    pub fn forget_context(&mut self) {
+        self.shared.context.clear();
     }
     pub fn clear_syllable_editor(&mut self) {
         self.shared.syl.clear();
@@ -782,16 +796,43 @@ impl SharedState {
         self.commit_buffer.clear();
         self.notice_buffer.clear();
         self.nth_conversion = 0;
+        self.context.clear();
     }
     fn conversion(&self) -> Vec<Interval> {
-        let paths = self.conv.convert(self.com.as_ref());
+        let paths = self.hypotheses();
         if paths.is_empty() {
             return vec![];
         }
         paths[self.nth_conversion % paths.len()].intervals.clone()
     }
     fn hypotheses(&self) -> Vec<Outcome> {
-        self.conv.convert(self.com.as_ref())
+        self.conv.convert_after(self.com.as_ref(), &self.context)
+    }
+    /// Adds what `intervals` commit, up to `end` in the composition, to the
+    /// context. Only a run of syllables makes one: a symbol or a letter in
+    /// between starts it over.
+    fn keep_context(&mut self, intervals: &[Interval], end: usize) {
+        // Enough for most words running on from it; every conversion looks
+        // the context up again.
+        const CONTEXT_LEN: usize = 4;
+        for it in intervals.iter().take_while(|it| it.end <= end) {
+            let chars: Vec<&str> = it.text.as_bytes().graphemes().collect();
+            let syllables: Option<Vec<Syllable>> = self.com.symbols()[it.start..it.end]
+                .iter()
+                .map(Symbol::to_syllable)
+                .collect();
+            match syllables {
+                Some(syllables) if syllables.len() == chars.len() => self.context.extend(
+                    syllables
+                        .into_iter()
+                        .zip(chars.into_iter().map(String::from)),
+                ),
+                _ => self.context.clear(),
+            }
+        }
+        let excess = self.context.len().saturating_sub(CONTEXT_LEN);
+        self.context.drain(..excess);
+        self.context_kept = true;
     }
     fn intervals(&self) -> impl DoubleEndedIterator<Item = Interval> + use<> {
         self.conversion().into_iter()
@@ -988,6 +1029,7 @@ impl SharedState {
             self.auto_learn(&intervals);
             self.learn_choices(&intervals);
         }
+        self.keep_context(&intervals, self.com.len());
         let output = intervals
             .into_iter()
             .map(|interval| interval.text)
@@ -1006,13 +1048,14 @@ impl SharedState {
 
         let mut remove = 0;
         self.commit_buffer.clear();
-        for it in intervals {
+        for it in &intervals {
             self.commit_buffer.push_str(&it.text);
             remove += it.len();
             if len - remove <= self.options.auto_commit_threshold {
                 break;
             }
         }
+        self.keep_context(&intervals, remove);
         self.com.remove_front(remove);
         debug!(
             "buffer has {} symbols left after auto commit",
@@ -1128,6 +1171,7 @@ impl BasicEditor for Editor {
         if self.shared.last_key_behavior == EditorKeyBehavior::Commit {
             self.shared.commit_buffer.clear();
         }
+        self.shared.context_kept = false;
 
         let orig_nth_conv = self.shared.nth_conversion;
         match self.state.next(&mut self.shared, key_event) {
@@ -1147,6 +1191,10 @@ impl BasicEditor for Editor {
 
         if self.is_entering() && self.shared.last_key_behavior == EditorKeyBehavior::Absorb {
             self.shared.try_auto_commit();
+        }
+        // A punctuation mark, a space or a letter went out on its own.
+        if self.shared.last_key_behavior == EditorKeyBehavior::Commit && !self.shared.context_kept {
+            self.shared.context.clear();
         }
         if self.shared.nth_conversion > 0 && self.shared.nth_conversion == orig_nth_conv {
             // Force snapshot if the user Tab multiple times and then
@@ -2307,6 +2355,119 @@ mod tests {
             editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
         }
         assert_eq!("測試", editor.display());
+    }
+
+    /// 被 then 入 and 褥 under ㄖㄨˋ, 入 the likelier alone, with 被褥 a word.
+    fn context_editor() -> super::Editor {
+        let mut builder = StringTableBuilder::new();
+        for word in ["被", "背", "入", "褥", "被褥"] {
+            builder.insert(word);
+        }
+        let string_table = builder.build();
+        let bei4 = syl![bpmf::B, bpmf::EI, bpmf::TONE4];
+        let ru4 = syl![bpmf::R, bpmf::U, bpmf::TONE4];
+        let mut dict_builder = StaticDictBuilder::new();
+        let mut lm = StaticLmCompiler::new();
+        let wid = |word| string_table.get_wid(word).unwrap();
+        let words = [
+            (vec![bei4], "被", -2.5),
+            (vec![bei4], "背", -3.0),
+            (vec![ru4], "入", -3.0),
+            (vec![ru4], "褥", -5.5),
+            (vec![bei4, ru4], "被褥", -5.5),
+        ];
+        lm.reserve_unigrams(words.iter().map(|w| wid(w.1).0 as usize + 1).max().unwrap());
+        for (syllables, word, log10_prob) in words {
+            dict_builder.insert(&syllables, wid(word));
+            lm.insert_unigram(wid(word), log10_prob);
+        }
+        let mut buf = vec![];
+        lm.to_writer(&mut buf).unwrap();
+        EditorBuilder::new()
+            .string_table(string_table.clone())
+            .static_dict(dict_builder.build())
+            .static_lm(StaticLm::from_reader(buf.as_slice(), LoadMode::Eager).unwrap())
+            .history_dict(HistoryDict::new(string_table))
+            .build()
+    }
+
+    fn type_ascii(editor: &mut super::Editor, keys: &[u8]) -> String {
+        for &ascii in keys {
+            editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+        }
+        editor.display()
+    }
+
+    fn press(editor: &mut super::Editor, code: keycode::Keycode, ksym: keysym::Keysym) {
+        editor.process_keyevent(KeyboardEvent::builder().code(code).ksym(ksym).build());
+    }
+
+    #[test]
+    fn converts_on_from_what_was_committed() {
+        // Alone, ㄖㄨˋ is 入: what follows hangs on the context.
+        let mut editor = context_editor();
+        assert_eq!("入", type_ascii(&mut editor, b"bj4"));
+
+        // 被 committed, then ㄖㄨˋ: 褥, as ㄅㄟˋㄖㄨˋ typed in one go is 被褥.
+        let mut editor = context_editor();
+        assert_eq!("被褥", type_ascii(&mut editor, b"1o4bj4"));
+        let mut editor = context_editor();
+        type_ascii(&mut editor, b"1o4");
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("被", editor.display_commit());
+        assert_eq!("褥", type_ascii(&mut editor, b"bj4"));
+        // Part of a word that began before the composition, 褥 is no word to
+        // learn on its own.
+        assert_eq!(
+            vec![Interval {
+                start: 0,
+                end: 1,
+                is_phrase: false,
+                text: "褥".into()
+            }],
+            editor.intervals().collect::<Vec<_>>()
+        );
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("褥", editor.display_commit());
+    }
+
+    #[test]
+    fn context_must_read_as_committed() {
+        // 背 committed: 被褥 doesn't fit it, so ㄖㄨˋ is 入 again.
+        let mut editor = context_editor();
+        type_ascii(&mut editor, b"1o4");
+        press(&mut editor, keycode::KEY_DOWN, keysym::SYM_DOWN);
+        let n = editor.all_candidates().unwrap().iter().position(|c| c == "背").unwrap();
+        editor.select(n).unwrap();
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("背", editor.display_commit());
+        assert_eq!("入", type_ascii(&mut editor, b"bj4"));
+    }
+
+    #[test]
+    fn context_ends_where_other_text_comes() {
+        let commit_bei = |editor: &mut super::Editor| {
+            type_ascii(editor, b"1o4");
+            press(editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        };
+        // The frontend gave a key to the program, or the caret moved.
+        let mut editor = context_editor();
+        commit_bei(&mut editor);
+        editor.forget_context();
+        assert_eq!("入", type_ascii(&mut editor, b"bj4"));
+
+        // A space typed after it goes between them.
+        let mut editor = context_editor();
+        commit_bei(&mut editor);
+        press(&mut editor, keycode::KEY_SPACE, keysym::SYM_SPACE);
+        assert_eq!(" ", editor.display_commit());
+        assert_eq!("入", type_ascii(&mut editor, b"bj4"));
+
+        // Clearing the editor starts over.
+        let mut editor = context_editor();
+        commit_bei(&mut editor);
+        editor.clear();
+        assert_eq!("入", type_ascii(&mut editor, b"bj4"));
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub(crate) const ID_SWITCH_LANG: u32 = 101;
 pub(crate) const ID_MODE_ICON: u32 = 103;
 pub(crate) const ID_OUTPUT_SIMP_CHINESE: u32 = 40027;
 pub(crate) const ID_OUTPUT_SIMP_VOCABULARY: u32 = 40028;
+pub(crate) const ID_SORT_CANDIDATES: u32 = 40029;
 pub(crate) const ID_MOEDICT: u32 = 40025;
 pub(crate) const ID_DICT: u32 = 40011;
 pub(crate) const ID_SIMPDICT: u32 = 40012;

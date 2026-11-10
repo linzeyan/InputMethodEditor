@@ -244,6 +244,41 @@ impl Engine {
         ui: &mut impl Frontend,
         ev: SystemKeyboardEvent,
     ) -> Result<bool> {
+        let taken = self.test_keydown(ui, ev)?;
+        if !taken {
+            self.passed_to_program(ev);
+        }
+        Ok(taken)
+    }
+
+    /// A key the program gets moves the caret or edits the text there (Enter,
+    /// Backspace, arrows, Ctrl+V), so what chewing committed last is no longer
+    /// what is before the caret. Modifiers alone change nothing.
+    fn passed_to_program(&mut self, ev: SystemKeyboardEvent) {
+        let ksym = ev.to_keyboard_event(self.keymap).ksym;
+        if !matches!(
+            ksym,
+            SYM_LEFTSHIFT
+                | SYM_RIGHTSHIFT
+                | keysym::SYM_LEFTCTRL
+                | keysym::SYM_RIGHTCTRL
+                | keysym::SYM_LEFTALT
+                | keysym::SYM_RIGHTALT
+                | keysym::SYM_LEFTMETA
+                | keysym::SYM_RIGHTMETA
+                | SYM_CAPSLOCK
+        ) {
+            self.chewing_editor.forget_context();
+        }
+    }
+
+    /// Stops converting after what was committed last: the caret may be
+    /// anywhere now.
+    pub(crate) fn forget_context(&mut self) {
+        self.chewing_editor.forget_context();
+    }
+
+    fn test_keydown(&mut self, ui: &mut impl Frontend, ev: SystemKeyboardEvent) -> Result<bool> {
         // NB: self.lang_mode might have changed earlier
         self.chewing_editor
             .set_editor_options(|opt| opt.language_mode = self.lang_mode.get().into());
@@ -659,7 +694,15 @@ impl Engine {
             }
         }
 
-        self.show_edit(ui, text_action)
+        // The action types its own text after the commit.
+        if text_action.is_some() {
+            self.chewing_editor.forget_context();
+        }
+        let taken = self.show_edit(ui, text_action)?;
+        if !taken {
+            self.passed_to_program(ev);
+        }
+        Ok(taken)
     }
 
     /// A click on the candidate list's `slot`: selects it as its key would.
@@ -892,7 +935,8 @@ impl Engine {
         });
     }
 
-    /// Forgets what was being typed: the document ended the composition.
+    /// Forgets what was being typed: the document ended the composition, as a
+    /// click elsewhere does, so the caret may have moved too.
     pub(crate) fn on_composition_terminated(&mut self) {
         if self.candidate_list.is_some() {
             self.hide_candidates();
@@ -903,6 +947,7 @@ impl Engine {
         }
         editor.clear_syllable_editor();
         editor.clear_composition_editor();
+        editor.forget_context();
     }
 
     /// Runs a command from the menu or a language bar button.
@@ -932,6 +977,11 @@ impl Engine {
             ID_OUTPUT_SIMP_VOCABULARY => {
                 if let Err(error) = self.toggle_simp_vocabulary(ui) {
                     error!("unable to toggle simplified vocabulary: {error}");
+                }
+            }
+            ID_SORT_CANDIDATES => {
+                if let Err(error) = self.toggle_sort_candidates(ui) {
+                    error!("unable to toggle candidate sorting: {error}");
                 }
             }
             ID_MOEDICT => open_url("https://www.moedict.tw/"),
@@ -1266,6 +1316,19 @@ impl Engine {
         ui.update_lang_buttons(self)
     }
 
+    /// The settings app's switch, in the menu too. Saved like the others; this
+    /// app's editor takes it now, as saving keeps the config from reloading.
+    fn toggle_sort_candidates(&mut self, ui: &impl Frontend) -> Result<()> {
+        let cfg = &mut self.cfg.chewing_tsf;
+        cfg.sort_candidates_by_frequency = !cfg.sort_candidates_by_frequency;
+        let sort = cfg.sort_candidates_by_frequency;
+        self.cfg.save_reg();
+        self.chewing_editor
+            .set_editor_options(|opt| opt.sort_candidates_by_frequency = sort);
+        // Ticks the menu item.
+        ui.update_lang_buttons(self)
+    }
+
     /// Saved to the registry like the simplified switch, so every app types
     /// the same way; the others pick it up when they next get focus.
     fn toggle_pinyin(&mut self, ui: &impl Frontend) -> Result<()> {
@@ -1416,6 +1479,7 @@ impl Engine {
         for (id, checked) in [
             (ID_OUTPUT_SIMP_CHINESE, cfg.output_simp_chinese),
             (ID_OUTPUT_SIMP_VOCABULARY, cfg.output_simp_vocabulary),
+            (ID_SORT_CANDIDATES, cfg.sort_candidates_by_frequency),
         ] {
             let flag = if checked { MF_CHECKED } else { MF_UNCHECKED };
             unsafe {

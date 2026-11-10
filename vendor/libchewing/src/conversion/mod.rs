@@ -25,6 +25,19 @@ mod word_lattice;
 /// first out order.
 pub trait ConversionEngine: Debug {
     fn convert<'a>(&'a self, comp: &'a Composition) -> Vec<Outcome>;
+    /// Converts `comp` as typed right after `context`, the characters
+    /// committed before it with their syllables: a word may run from them
+    /// into `comp`, so 被 then ㄖㄨˋ is 褥 (被褥), as typed in one go. The
+    /// intervals cover `comp` only. Engines that don't weigh words against
+    /// each other have no use for it.
+    fn convert_after<'a>(
+        &'a self,
+        comp: &'a Composition,
+        context: &[(Syllable, String)],
+    ) -> Vec<Outcome> {
+        let _ = context;
+        self.convert(comp)
+    }
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
