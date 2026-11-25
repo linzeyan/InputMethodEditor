@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# fmt and lint run here instead of in CI (project-conventions references/makefile.md
+# "本地跑、CI 不跑"): they give the same answer on every OS, so a CI job would only repeat
+# them with a toolchain that drifts from ours. CI keeps the checks that depend on the OS.
+#
+# `make lint` records the tree it passed on; pushing that same tree skips the rerun, so a
+# `make check` right before the push costs nothing extra here.
+# Installed by `make setup` (git config core.hooksPath .githooks). Skip once: git push --no-verify.
+stamp=$(git rev-parse --git-path lint-ok)
+[ -z "$(git status --porcelain --untracked-files=no)" ] &&
+  [ "$(cat "$stamp" 2>/dev/null)" = "$(git rev-parse 'HEAD^{tree}')" ] && exit 0
+exec make lint </dev/null

@@ -11,11 +11,15 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     container: fedora:44
     name: Build
+    timeout-minutes: 30
     steps:
       - name: Cache llvm-mingw
         id: cache-llvm-linux
@@ -34,7 +38,7 @@ jobs:
           echo "/opt/llvm-mingw/bin" >> $GITHUB_PATH
       - name: Install build dependencies
         run: |
-          sudo dnf -y install clang rustup git msitools
+          sudo dnf -y install clang rustup git msitools make
           rustup-init -y
           echo "$HOME/.cargo/bin" >> $GITHUB_PATH
       - name: Setup rust targets
@@ -64,8 +68,12 @@ jobs:
           test "$GITHUB_REF_NAME" = "v${pkgid##*[#@]}"
           grep -qF "\"${GITHUB_REF_NAME#v}.0\\0\"" tip/rc/version.rc
 
+      # Before the build: a tag whose regression tests fail publishes nothing.
+      - name: Test
+        run: make test
+
       - name: Build the MSI
-        run: cargo xtask dist --release --target gnullvm --msi
+        run: make msi
 
       - uses: actions/upload-artifact@v7
         with:
@@ -81,6 +89,7 @@ jobs:
     needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
