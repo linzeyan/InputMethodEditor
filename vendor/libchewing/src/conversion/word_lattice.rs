@@ -57,6 +57,7 @@ impl Lattice {
                             hist_prob: f64::NEG_INFINITY,
                             user_pref: None,
                             preferred: false,
+                            alone: 0,
                         },
                         bonus: 0.0,
                     });
@@ -129,6 +130,7 @@ impl LatticeBuilder {
                     hist_prob: f64::NEG_INFINITY,
                     user_pref: None,
                     preferred: false,
+                    alone: 0,
                 }];
             }
             if selection.intersect_range(start, end) {

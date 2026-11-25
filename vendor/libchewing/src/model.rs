@@ -67,6 +67,12 @@ pub enum Candidate {
         /// Picked by the user for this reading often enough to come first
         /// among the words as long (see `HistoryDict::observe_choice`).
         preferred: bool,
+        /// How much less often the word is read as typed than it is read at
+        /// all, in the user dictionary's boosts: a character read several
+        /// ways is rarely meant by its rare readings. Counts where no word
+        /// around it tells the reading: a syllable typed alone (see
+        /// `ChewingEngine::convert_after`) and a list of candidates.
+        alone: i8,
     },
     Grapheme(String),
 }

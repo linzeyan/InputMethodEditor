@@ -70,7 +70,7 @@ pub(crate) fn write_unihan_dict(dict_dir: &Path) -> Result<(), Error> {
 }
 
 /// `(character, value)` of each `field` line in a Unihan file.
-fn fields<'a>(text: &'a str, field: &'a str) -> impl Iterator<Item = (char, &'a str)> {
+pub(crate) fn fields<'a>(text: &'a str, field: &'a str) -> impl Iterator<Item = (char, &'a str)> {
     text.lines().filter_map(move |line| {
         let mut parts = line.split('\t');
         let ch = code_point(parts.next()?)?;
@@ -84,7 +84,7 @@ fn code_point(text: &str) -> Option<char> {
 }
 
 /// Tone-marked pinyin (bèng) as zhuyin (ㄅㄥˋ).
-fn zhuyin(pinyin: &str) -> Option<String> {
+pub(crate) fn zhuyin(pinyin: &str) -> Option<String> {
     const MARKED: [(char, [char; 4]); 6] = [
         ('a', ['ā', 'á', 'ǎ', 'à']),
         ('e', ['ē', 'é', 'ě', 'è']),

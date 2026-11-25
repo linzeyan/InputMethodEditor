@@ -276,15 +276,17 @@ impl Editor {
                 None => HistoryDict::new(string_table.clone()),
             };
 
-            // Optional. A UserDict, as only that holds words the string table
-            // lacks; this one is never written.
-            let unihan_dict = match sp.find_file("unihan_dict.csv") {
+            // Optional, and never written. UserDicts: only that holds words
+            // the string table lacks, and reads a rank for each word.
+            let read_only_dict = |name: &str| match sp.find_file(name) {
                 Some(path) => UserDict::open(&path, string_table.clone()).unwrap_or_else(|err| {
                     error!("{}", err.report());
                     UserDict::new(string_table.clone())
                 }),
                 None => UserDict::new(string_table.clone()),
             };
+            let unihan_dict = read_only_dict("unihan_dict.csv");
+            let polyphone_dict = read_only_dict("polyphone_dict.csv");
 
             let composite_dict = CompositeDict::new(
                 static_dict,
@@ -292,6 +294,7 @@ impl Editor {
                 hist_dict.clone(),
                 user_dict.clone(),
                 unihan_dict,
+                polyphone_dict,
             );
 
             let word_lattice_builder = LatticeBuilder {
@@ -1971,6 +1974,7 @@ pub struct EditorBuilder {
     rare_dict: StaticDict,
     user_dict: UserDict,
     history_dict: HistoryDict,
+    polyphone_dict: UserDict,
     lm: StaticLm,
     abbrev: AbbrevTable,
     sym_sel: SymbolSelector,
@@ -1982,6 +1986,7 @@ impl EditorBuilder {
         let string_table = StringTable::new();
         let user_dict = UserDict::new(string_table.clone());
         let history_dict = HistoryDict::new(string_table.clone());
+        let polyphone_dict = UserDict::new(string_table.clone());
 
         Self {
             string_table,
@@ -1989,6 +1994,7 @@ impl EditorBuilder {
             rare_dict: StaticDict::new(),
             user_dict,
             history_dict,
+            polyphone_dict,
             lm: StaticLm::new(),
             abbrev: AbbrevTable::new(),
             sym_sel: SymbolSelector::default(),
@@ -2021,6 +2027,11 @@ impl EditorBuilder {
         self
     }
 
+    pub fn polyphone_dict(mut self, d: UserDict) -> Self {
+        self.polyphone_dict = d;
+        self
+    }
+
     pub fn static_lm(mut self, lm: StaticLm) -> Self {
         self.lm = lm;
         self
@@ -2043,6 +2054,7 @@ impl EditorBuilder {
             self.history_dict.clone(),
             self.user_dict.clone(),
             UserDict::new(self.string_table.clone()),
+            self.polyphone_dict.clone(),
         );
 
         let word_lattice_builder = LatticeBuilder {
@@ -2355,6 +2367,97 @@ mod tests {
             editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
         }
         assert_eq!("測試", editor.display());
+    }
+
+    // fb20261125a: 「我打ㄍㄨㄥ 都是先出現'紅'」. The language model counts a
+    // character once however it is read, so 紅 brought ㄏㄨㄥˊ's count to
+    // ㄍㄨㄥ, a reading it has in one old word, and came before 工. The first
+    // character a syllable gives is how the user judges whether the input
+    // method knows the language: one hardly ever read that way, every time,
+    // reads as a broken dictionary, and typing more never corrects it.
+    #[test]
+    fn regression_fb20261125a_rare_reading_does_not_come_first() {
+        let mut builder = StringTableBuilder::new();
+        for word in ["紅", "工", "洪", "女", "女紅", "教", "交", "你"] {
+            builder.insert(word);
+        }
+        let string_table = builder.build();
+        let gong = syl![bpmf::G, bpmf::U, bpmf::ENG];
+        let hong2 = syl![bpmf::H, bpmf::U, bpmf::ENG, bpmf::TONE2];
+        let nv3 = syl![bpmf::N, bpmf::IU, bpmf::TONE3];
+        let jiao1 = syl![bpmf::J, bpmf::I, bpmf::AU];
+        let ni3 = syl![bpmf::N, bpmf::I, bpmf::TONE3];
+        let mut dict_builder = StaticDictBuilder::new();
+        let mut lm = StaticLmCompiler::new();
+        let wid = |word| string_table.get_wid(word).unwrap();
+        // As the shipped model has them: 紅 the likelier character.
+        let words = [
+            (vec![gong], "工", -3.8),
+            (vec![gong], "紅", -3.5),
+            (vec![hong2], "洪", -4.5),
+            (vec![hong2], "紅", -3.5),
+            (vec![nv3], "女", -3.0),
+            (vec![nv3, gong], "女紅", -6.0),
+            (vec![jiao1], "交", -3.6),
+            (vec![jiao1], "教", -3.3),
+            (vec![ni3], "你", -2.0),
+        ];
+        lm.reserve_unigrams(words.iter().map(|w| wid(w.1).0 as usize + 1).max().unwrap());
+        for (syllables, word, log10_prob) in words {
+            dict_builder.insert(&syllables, wid(word));
+            lm.insert_unigram(wid(word), log10_prob);
+        }
+        lm.insert_bigram(wid("你"), wid("教"), -3.4);
+        // With no word before, the decoder asks the model what follows word
+        // 0, whichever that is: the shipped one has 與 and 的 there.
+        assert_ne!(wid("你"), WordId(0), "紅 below must not follow 你");
+        lm.insert_bigram(WordId(0), wid("紅"), -3.0);
+        let mut buf = vec![];
+        lm.to_writer(&mut buf).unwrap();
+        let polyphones = "紅,ㄍㄨㄥ,-40\n紅,ㄏㄨㄥˊ,0\n教,ㄐㄧㄠ,-19\n";
+        let mut editor = EditorBuilder::new()
+            .string_table(string_table.clone())
+            .static_dict(dict_builder.build())
+            .static_lm(StaticLm::from_reader(buf.as_slice(), LoadMode::Eager).unwrap())
+            .polyphone_dict(UserDict::from_reader(polyphones.as_bytes(), string_table.clone()).unwrap())
+            .history_dict(HistoryDict::new(string_table))
+            .build();
+        editor.set_editor_options(|opt| opt.sort_candidates_by_frequency = true);
+        let key = |code, ksym| KeyboardEvent::builder().code(code).ksym(ksym).build();
+        let typed = |editor: &mut super::Editor, keys: &[u8]| {
+            editor.clear();
+            for &ascii in keys {
+                editor.process_keyevent(map_ascii(&QWERTY_MAP, ascii));
+            }
+            editor.display()
+        };
+
+        assert_eq!("工", typed(&mut editor, b"ej/ "), "ㄍㄨㄥ alone");
+        // Still offered, after the characters read ㄍㄨㄥ more often.
+        editor.process_keyevent(key(keycode::KEY_DOWN, keysym::SYM_DOWN));
+        assert_eq!(vec!["工", "紅"], editor.all_candidates().unwrap());
+        // Its own reading keeps its place, and so does the word.
+        assert_eq!("紅", typed(&mut editor, b"cj/6"), "ㄏㄨㄥˊ alone");
+        assert_eq!("女紅", typed(&mut editor, b"sm3ej/ "), "ㄋㄩˇㄍㄨㄥ");
+        // Only alone. 教 is counted ㄐㄧㄠ an eighth as often as ㄐㄧㄠˋ, in
+        // 教育 and the like: as a verb of its own it is ㄐㄧㄠ, and a sentence
+        // ranked by those counts would read 交你.
+        assert_eq!("交", typed(&mut editor, b"rul "), "ㄐㄧㄠ alone");
+        assert_eq!("教你", typed(&mut editor, b"rul su3"), "ㄐㄧㄠㄋㄧˇ");
+        // What was just committed is before it more often than not, and
+        // ㄍㄨㄥ is as alone after it: only a word running on from there
+        // says otherwise.
+        typed(&mut editor, b"su3");
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("工", type_ascii(&mut editor, b"ej/ "), "ㄍㄨㄥ after 你");
+        typed(&mut editor, b"sm3");
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("紅", type_ascii(&mut editor, b"ej/ "), "ㄍㄨㄥ after 女");
+        // What 你 says of 教 stands as counted: it is of 教 after 你, a word
+        // of its own there, not of every 教 in 教育.
+        typed(&mut editor, b"su3");
+        press(&mut editor, keycode::KEY_ENTER, keysym::SYM_RETURN);
+        assert_eq!("教", type_ascii(&mut editor, b"rul "), "ㄐㄧㄠ after 你");
     }
 
     /// 被 then 入 and 褥 under ㄖㄨˋ, 入 the likelier alone, with 被褥 a word.

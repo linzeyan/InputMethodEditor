@@ -139,22 +139,33 @@ impl Decoder {
             }
             _ => return ERROR_FLOOR.neg(),
         };
-        let (hist_prob, user_pref) = match w2 {
+        let (hist_prob, user_pref, alone) = match w2 {
             Candidate::Word {
                 wid: _,
                 hist_prob,
                 user_pref,
+                alone,
                 ..
-            } => (*hist_prob, *user_pref),
-            _ => (f64::NEG_INFINITY, None),
+            } => (*hist_prob, *user_pref, *alone),
+            _ => (f64::NEG_INFINITY, None, 0),
         };
+        // The model's count of a word is of all its readings: `alone` is the
+        // share of it the reading typed has. The history learns each reading
+        // apart. A bigram is the word after another, which tells its reading
+        // (教 after 我 is a word of its own, not the 教 of 教育): it stands as
+        // counted. With no word before, what the model has for word 0 in its
+        // place tells no more than the unigram does.
+        let read_as = MANUAL_BOOST_FACTOR * alone as f64 / 100.0;
+        let after_word = matches!(w1, Candidate::Word { .. });
         // Linear interpolation base unigram and history unigram
         let p_uni = log10_sum_exp(
-            LOG10_LAMBDA_BASE_UNIGRAM + self.lm.unigram(wid2),
+            LOG10_LAMBDA_BASE_UNIGRAM + self.lm.unigram(wid2) + read_as,
             LOG10_LAMBDA_HIST_UNIGRAM + hist_prob,
         );
         let p_bi = log10_sum_exp(
-            LOG10_LAMBDA_BASE_BIGRAM + self.lm.bigram(wid1, wid2),
+            LOG10_LAMBDA_BASE_BIGRAM
+                + self.lm.bigram(wid1, wid2)
+                + if after_word { 0.0 } else { read_as },
             LOG10_LAMBDA_HIST_BIGRAM + self.hist.bigram(wid1, wid2),
         );
         // Linear interpolation unigram and bigram
@@ -351,6 +362,7 @@ mod test {
             hist_prob: 0.0,
             user_pref: None,
             preferred: false,
+            alone: 0,
         }
     }
 

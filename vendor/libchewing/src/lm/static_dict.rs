@@ -144,6 +144,39 @@ impl StaticDict {
         })
     }
 
+    /// Every word, with each run of syllables it is spelled with.
+    pub fn entries(&self) -> Vec<(Vec<Syllable>, WordId)> {
+        let dict = self.inner.index.as_ref();
+        let data = self.inner.words.as_ref();
+        let mut result = vec![];
+        bail_if_oob!(0, TrieNodeView::SIZE, dict.len());
+        let mut pending = vec![(TrieNodeView(&dict[..TrieNodeView::SIZE]), vec![])];
+        while let Some((node, path)) = pending.pop() {
+            // An empty dictionary's root has no children.
+            if node.child_begin() == node.child_end() {
+                continue;
+            }
+            bail_if_oob!(node.child_begin(), node.child_end(), dict.len());
+            for child in dict[node.child_begin()..node.child_end()].chunks_exact(TrieNodeView::SIZE)
+            {
+                // A leaf has zero where a node has its syllable.
+                if let Ok(syllable) = Syllable::try_from(TrieNodeView(child).syllable()) {
+                    let mut path = path.clone();
+                    path.push(syllable);
+                    pending.push((TrieNodeView(child), path));
+                    continue;
+                }
+                let leaf = TrieLeafView(child);
+                bail_if_oob!(leaf.data_begin(), leaf.data_end(), data.len());
+                result.extend(
+                    WordsIter::new(&data[leaf.data_begin()..leaf.data_end()])
+                        .map(|wid| (path.clone(), wid)),
+                );
+            }
+        }
+        result
+    }
+
     pub(crate) fn lookup(&self, syllables: &[Syllable], strategy: LookupStrategy) -> Vec<WordId> {
         self.lookup_readings(syllables, strategy)
             .into_iter()
@@ -412,6 +445,29 @@ mod test {
 
     use super::StaticDict;
     use super::StaticDictBuilder;
+
+    #[test]
+    fn entries_lists_every_spelling() {
+        let mut builder = StaticDictBuilder::new();
+        let ce4 = syl![Bopomofo::C, Bopomofo::E, Bopomofo::TONE4];
+        let shi4 = syl![Bopomofo::SH, Bopomofo::TONE4];
+        builder.insert(&[ce4], WordId(1));
+        builder.insert(&[ce4], WordId(2));
+        builder.insert(&[ce4, shi4], WordId(3));
+        builder.insert(&[shi4], WordId(1));
+        let mut entries = builder.build().entries();
+        entries.sort_by_key(|(syllables, wid)| (wid.0, syllables[0] == ce4));
+        assert_eq!(
+            entries,
+            [
+                (vec![shi4], WordId(1)),
+                (vec![ce4], WordId(1)),
+                (vec![ce4], WordId(2)),
+                (vec![ce4, shi4], WordId(3)),
+            ]
+        );
+        assert!(StaticDict::new().entries().is_empty());
+    }
 
     #[test]
     fn build() {

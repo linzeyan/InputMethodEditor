@@ -47,6 +47,7 @@
               <File Id="swkb" Source="Dictionary/swkb.dat" />
               <File Id="symbols" Source="Dictionary/symbols.dat" />
               <File Id="unihan_dict" Source="Dictionary/unihan_dict.csv" />
+              <File Id="polyphone_dict" Source="Dictionary/polyphone_dict.csv" />
               <File Id="unihan_license" Source="Dictionary/unihan_license.txt" />
             </Component>
           </Directory>

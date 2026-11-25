@@ -126,6 +126,7 @@ mod tests {
             HistoryDict::new(string_table),
             user_dict,
             UserDict::new(StringTable::new()),
+            UserDict::new(StringTable::new()),
         )
     }
 

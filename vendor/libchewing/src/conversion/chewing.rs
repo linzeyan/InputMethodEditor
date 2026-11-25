@@ -41,7 +41,7 @@ impl ChewingEngine {
         let context = if com.is_empty() { &[][..] } else { context };
         let n = context.len();
         let joined;
-        let lattice = if n == 0 {
+        let mut lattice = if n == 0 {
             self.word_lattice_builder.build_lattice(com)
         } else {
             joined = after_context(com, context);
@@ -49,6 +49,23 @@ impl ChewingEngine {
             self.keep_agreeing(&mut lattice, context);
             lattice
         };
+        // How often a character is read as typed ranks it only when one
+        // syllable is typed: no word after it says which character it is.
+        // Not in a longer composition: the counts are of all text, where a
+        // rarer reading can be the one a character has as a word of its own
+        // (教育 outnumbers 教你, which is ㄐㄧㄠ), and ranking by them there
+        // turned 量一下 into 涼一下. Nor the context, which is committed.
+        let typed_alone = lattice.len == n + 1;
+        for (start, edges) in lattice.edges.iter_mut().enumerate() {
+            if typed_alone && start == n {
+                continue;
+            }
+            for edge in edges {
+                if let Candidate::Word { alone, .. } = &mut edge.cand {
+                    *alone = 0;
+                }
+            }
+        }
         let hypothesis = self.decoder.decoden(lattice, Self::MAX_OUT);
 
         let mut outcomes: Vec<Outcome> = hypothesis
@@ -275,6 +292,7 @@ mod tests {
             StaticDict::new(),
             HistoryDict::new(string_table),
             user_dict,
+            UserDict::new(StringTable::new()),
             UserDict::new(StringTable::new()),
         )
     }
