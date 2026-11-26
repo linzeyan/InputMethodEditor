@@ -290,10 +290,7 @@ impl ChewingTextService {
             context: Some(context.clone()),
         };
         let handled = self.engine.on_keydown(&mut ui, ev);
-        self.ui.bar_context = self
-            .engine
-            .has_composition_bar()
-            .then(|| context.clone());
+        self.ui.bar_context = self.engine.has_composition_bar().then(|| context.clone());
         handled
     }
 

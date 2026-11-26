@@ -240,7 +240,14 @@ fn fbm(x: f32, y: f32, px: i32, py: i32, octaves: u32, seed: u32) -> f32 {
     for octave in 0..octaves {
         let scale = (1 << octave) as f32;
         let period = 1 << octave;
-        sum += weight * noise(x * scale, y * scale, px * period, py * period, seed + octave);
+        sum += weight
+            * noise(
+                x * scale,
+                y * scale,
+                px * period,
+                py * period,
+                seed + octave,
+            );
         total += weight;
         weight *= 0.5;
     }

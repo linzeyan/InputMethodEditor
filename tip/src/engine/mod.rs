@@ -1148,7 +1148,11 @@ impl Engine {
                 }
             };
             let cfg = &self.cfg.chewing_tsf;
-            let caret = preedit.chars().take(caret).map(char::len_utf16).sum::<usize>();
+            let caret = preedit
+                .chars()
+                .take(caret)
+                .map(char::len_utf16)
+                .sum::<usize>();
             let skin = Skin::from_name(&cfg.skin);
             let palette = skin.map(Skin::palette);
             bar.set_model(NotificationModel {
@@ -1156,7 +1160,11 @@ impl Engine {
                 caret: Some(caret as u32),
                 font_family: HSTRING::from(&cfg.font_family),
                 font_size: cfg.font_size as f32,
-                fg_color: color_s(palette.as_ref().map_or(cfg.font_fg_color.as_str(), |p| p.fg)),
+                fg_color: color_s(
+                    palette
+                        .as_ref()
+                        .map_or(cfg.font_fg_color.as_str(), |p| p.fg),
+                ),
                 bg_color: color_s(&cfg.font_bg_color),
                 border_color: color_s(
                     palette
@@ -1276,10 +1284,7 @@ impl Engine {
 
                 candidate_list.show();
 
-                if let Some(rect) = self
-                    .composition_bar_rect()
-                    .or_else(|| ui.caret_rect().ok())
-                {
+                if let Some(rect) = self.composition_bar_rect().or_else(|| ui.caret_rect().ok()) {
                     candidate_list.set_position(rect.left, rect.bottom);
                     // HACK set position again to use correct DPI setting
                     candidate_list.set_position(rect.left, rect.bottom);
