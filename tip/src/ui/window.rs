@@ -83,7 +83,7 @@ impl Window {
                 0,
                 Some(parent),
                 None,
-                Some(hinst.into()),
+                Some(hinst),
                 Some(user_data),
             );
             // Restore previous DPI context so we don't interfere with the

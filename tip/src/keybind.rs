@@ -115,17 +115,17 @@ mod tests {
 
     #[test]
     fn match_ctrl_f12() {
-        let target = Some(KeyboardEvent::builder().ksym(SYM_F12).control().build());
-        assert_eq!(target, key_from_str("Ctrl+F12"));
-        assert_eq!(target, key_from_str("ctrl+F12"));
-        assert_eq!(target, key_from_str("control+F12"));
+        let target = KeyboardEvent::builder().ksym(SYM_F12).control().build();
+        assert_eq!(Some(target), key_from_str("Ctrl+F12"));
+        assert_eq!(Some(target), key_from_str("ctrl+F12"));
+        assert_eq!(Some(target), key_from_str("control+F12"));
         let keybinding = Keybinding::try_from(&KeybindValue {
             key: "Ctrl+F12".to_string(),
             action: "ok".to_string(),
             param: "".to_string(),
         })
         .unwrap();
-        assert!(keybinding.matches(&target.unwrap()));
+        assert!(keybinding.matches(&target));
         assert!(
             !keybinding.matches(
                 &KeyboardEvent::builder()
@@ -137,37 +137,35 @@ mod tests {
     }
     #[test]
     fn match_ctrl_shift_a() {
-        let target = Some(
-            KeyboardEvent::builder()
-                .ksym(Keysym::from_char('A'))
-                .control()
-                .shift()
-                .build(),
-        );
-        assert_eq!(target, key_from_str("Ctrl+Shift+A"));
-        assert_eq!(target, key_from_str("ctrl+shift+A"));
-        assert_eq!(target, key_from_str("control+shift+A"));
+        let target = KeyboardEvent::builder()
+            .ksym(Keysym::from_char('A'))
+            .control()
+            .shift()
+            .build();
+        assert_eq!(Some(target), key_from_str("Ctrl+Shift+A"));
+        assert_eq!(Some(target), key_from_str("ctrl+shift+A"));
+        assert_eq!(Some(target), key_from_str("control+shift+A"));
         let keybinding = Keybinding::try_from(&KeybindValue {
             key: "Ctrl+Shift+A".to_string(),
             action: "ok".to_string(),
             param: "".to_string(),
         })
         .unwrap();
-        assert!(keybinding.matches(&target.unwrap()));
+        assert!(keybinding.matches(&target));
     }
     #[test]
     fn match_shift_alt() {
-        let target = Some(KeyboardEvent::builder().shift().alt_if(true).build());
-        assert_eq!(target, key_from_str("shift+alt"));
-        assert_eq!(target, key_from_str("alt+shift"));
-        assert_eq!(target, key_from_str("Shift+Alt"));
+        let target = KeyboardEvent::builder().shift().alt_if(true).build();
+        assert_eq!(Some(target), key_from_str("shift+alt"));
+        assert_eq!(Some(target), key_from_str("alt+shift"));
+        assert_eq!(Some(target), key_from_str("Shift+Alt"));
         let keybinding = Keybinding::try_from(&KeybindValue {
             key: "Shift+Alt".to_string(),
             action: "ok".to_string(),
             param: "".to_string(),
         })
         .unwrap();
-        assert!(keybinding.matches(&target.unwrap()));
+        assert!(keybinding.matches(&target));
         assert!(
             keybinding.matches(
                 &KeyboardEvent::builder()

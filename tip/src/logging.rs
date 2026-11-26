@@ -68,8 +68,11 @@ const LEGACY_KEEP_SECS: u64 = 24 * 60 * 60;
 /// The level the user chose; the debugger may lower `log::max_level` below it.
 static FILE_LEVEL: AtomicU8 = AtomicU8::new(Level::Warn as u8);
 
+/// A local date: year, month, day.
+type Day = (u16, u16, u16);
+
 /// The day being written and its part, to clean up when the day changes.
-static CURRENT: Mutex<Option<((u16, u16, u16), u32)>> = Mutex::new(None);
+static CURRENT: Mutex<Option<(Day, u32)>> = Mutex::new(None);
 
 /// Appends to `%AppData%\InputMethodEditor\ime-<date>.log`, the log a user
 /// can send. Every process with a text field loads the text service, so the
@@ -138,7 +141,7 @@ impl Append for FileLog {
     }
 }
 
-fn log_name((year, month, day): (u16, u16, u16), part: u32) -> String {
+fn log_name((year, month, day): Day, part: u32) -> String {
     match part {
         0 => format!("ime-{year}-{month:02}-{day:02}.log"),
         _ => format!("ime-{year}-{month:02}-{day:02}.{part}.log"),
@@ -146,7 +149,7 @@ fn log_name((year, month, day): (u16, u16, u16), part: u32) -> String {
 }
 
 /// The highest part of `day` in `dir`, 0 when there is none.
-fn last_part(dir: &Path, day: (u16, u16, u16)) -> u32 {
+fn last_part(dir: &Path, day: Day) -> u32 {
     let first = log_name(day, 0);
     let stem = first.trim_end_matches(".log");
     let Ok(entries) = fs::read_dir(dir) else {
@@ -200,7 +203,7 @@ fn clean_up(dir: &Path, keep_secs: u64, max_total: u64) {
             kept.push((modified, meta.len(), entry.path()));
         }
     }
-    kept.sort_by(|a, b| b.0.cmp(&a.0));
+    kept.sort_by_key(|file| std::cmp::Reverse(file.0));
     let mut total = 0;
     for (_, len, path) in kept {
         total += len;

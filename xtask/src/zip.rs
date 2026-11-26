@@ -28,7 +28,7 @@ where
                 )
                 .into());
             };
-            let out_path = dest.join(&name.file_name().unwrap());
+            let out_path = dest.join(name.file_name().unwrap());
             eprintln!("Extracting {} as {}", name.display(), out_path.display());
             let mut out_file = File::create(out_path)?;
             io::copy(&mut file, &mut out_file)?;

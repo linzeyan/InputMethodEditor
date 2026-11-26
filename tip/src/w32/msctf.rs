@@ -15,5 +15,5 @@ windows_core::link!("msctf.dll" "system" fn TF_CreateCategoryMgr(ppcat: *mut Opt
 pub(crate) fn tf_create_category_mgr() -> Result<ITfCategoryMgr> {
     let mut ret: Option<ITfCategoryMgr> = None;
     unsafe { TF_CreateCategoryMgr(&raw mut ret) }.ok()?;
-    return Ok(ret.expect("unexpected TF_CreateCategoryMgr failure"));
+    Ok(ret.expect("unexpected TF_CreateCategoryMgr failure"))
 }

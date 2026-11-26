@@ -55,6 +55,9 @@ fn skin_brush(dc: &ID2D1DeviceContext, skin: Skin) -> Result<ID2D1Brush> {
     }
 }
 
+// A rectangle, two colors and a skin: a struct for them would only move the
+// list to the three callers.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn draw_message_box(
     dc: &ID2D1DeviceContext,
     left: f32,

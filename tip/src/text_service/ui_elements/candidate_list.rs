@@ -445,7 +445,7 @@ impl View {
                     )?;
                     target.SetDpi(dpi, dpi);
                 }
-                create_swapchain_bitmap(&swapchain, &target)?;
+                create_swapchain_bitmap(swapchain, target)?;
 
                 // Begin drawing
                 let dc = target;

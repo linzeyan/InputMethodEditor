@@ -51,10 +51,7 @@ fn create_device_with_type(drive_type: D3D_DRIVER_TYPE) -> Result<ID3D11Device, 
 }
 
 pub(crate) fn d3d11_device() -> Result<ID3D11Device, GfxError> {
-    DEVICE
-        .as_ref()
-        .map(|d| d.clone())
-        .map_err(|e| (*e).clone().into())
+    DEVICE.as_ref().map(|d| d.clone()).map_err(|e| (*e).clone())
 }
 
 pub(crate) fn create_render_target(
@@ -216,7 +213,7 @@ impl Clone for GfxError {
         GfxError {
             message: self.message.clone(),
             source: None,
-            location: self.location.clone(),
+            location: self.location,
         }
     }
 }

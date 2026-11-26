@@ -49,13 +49,12 @@ test: ## Tests that run on this machine: libchewing and xtask
 	cargo test -p chewing --lib
 	cargo test -p xtask
 
-# Clippy lints the Windows build, which is what the code is written for.
-# Warnings do not fail it yet. The last line lets .githooks/pre-push skip a
-# tree that already passed.
+# Clippy lints the Windows build, which is what the code is written for. The
+# last line lets .githooks/pre-push skip a tree that already passed.
 lint: ## Format and lint checks (run here and in pre-push, not in CI)
 	cargo +$(LINT_RUST) fmt --check $(CRATES:%=-p %)
 	$(CROSS) RC=llvm-rc RUSTFLAGS=-Ctarget-feature=+crt-static cargo +$(LINT_RUST) clippy --no-deps \
-		$(CRATES:%=-p %) --target x86_64-pc-windows-gnullvm --all-targets
+		$(CRATES:%=-p %) --target x86_64-pc-windows-gnullvm --all-targets -- -D warnings
 	@git diff --quiet HEAD && git rev-parse 'HEAD^{tree}' >"$$(git rev-parse --git-path lint-ok)" || true
 
 fmt: ## Format in place, with the same rustfmt lint checks against
